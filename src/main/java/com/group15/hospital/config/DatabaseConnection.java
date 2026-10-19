@@ -24,7 +24,7 @@ public final class DatabaseConnection {
     private final String username;
     private final String password;
 
-    // so that a normal lamba function can be formed for the connection to connect
+    // functional interface for transactions that return a value...
     // execute(conn -> (some dao query fnctions here))
     // the <T> lets you output any type of dataType
     @FunctionalInterface
@@ -32,19 +32,38 @@ public final class DatabaseConnection {
         T execute(Connection connection) throws Exception;
     }
 
+    // functional interface for void transactions so callers dont need to return null...
+    // for fucntions that dont return anything
+    // no need to write return null...
+    // like update and other things...
+    @FunctionalInterface
+    public interface VoidTransactionWork {
+        void execute(Connection connection) throws Exception;
+    }
+
     private DatabaseConnection() {
+        // loading the mysql driver explicitly so that older runtimes or scripts dont fail...
+        try {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } catch (ClassNotFoundException e) {
+            // driver might be auto loaded by jdbc 4 service provider mechanism...
+        }
+
         // javas own key value map to read .properties files...
         Properties properties = new Properties();
 
-        try (InputStream input = getClass().getClassLoader().getResourceAsStream("db.properties")) {
-            // if the user created db.properties
-            // load the key value pairs
-            if (input != null) {
-                properties.load(input);
+        // first try db.properties, if not present try db.properties.example...
+        InputStream input = getClass().getClassLoader().getResourceAsStream("db.properties");
+        if (input == null) {
+            input = getClass().getClassLoader().getResourceAsStream("db.properties.example");
+        }
+
+        if (input != null) {
+            try (InputStream in = input) {
+                properties.load(in);
+            } catch (IOException e) {
+                System.err.println("Warning: Could not read db properties, defaulting to local defaults");
             }
-        } catch (IOException e) {
-            System.err.println(
-                    "Warning: Could not read db.properties defaulting to local defaults");
         }
         // here error is thrown because we have a fallback credential so that
         // the program can keep running...
@@ -56,6 +75,7 @@ public final class DatabaseConnection {
                         "jdbc:mysql://localhost:3306/hospital_bed_db?useSSL=false&allowPublicKeyRetrieval=true");
         this.password = properties.getProperty("db.password", "root");
     }
+
 
     // access point to get the global singleton class...
     public static DatabaseConnection getInstance() {
@@ -122,7 +142,26 @@ public final class DatabaseConnection {
             }
         } catch (SQLException connEX) {
             throw new TransactionRollbackException(
-                    "Could not open the database connection for transacrtion", connEX);
+                    "Could not open the database connection for transaction", connEX);
         }
     }
+
+    // overload for transactions that do not return any result...
+    // so teammates dont have to write return null at the end of their lambda!
+    public void executeTransactionVoid(VoidTransactionWork work) {
+        executeTransaction(conn -> {
+            work.execute(conn);
+            return null;
+        });
+    }
+
+    // helper getters for tests or debugging connections...
+    public String getUrl() {
+        return url;
+    }
+
+    public String getUsername() {
+        return username;
+    }
 }
+
