@@ -1,12 +1,16 @@
 package com.group15.hospital.ui;
 
 import com.group15.hospital.dao.*;
+import com.group15.hospital.model.enums.UserRole;
+import com.group15.hospital.model.hierarchy.User;
 import com.group15.hospital.service.dispatch.AlertNotificationManager;
 import com.group15.hospital.service.dispatch.AmbulanceDispatchService;
 import com.group15.hospital.service.dispatch.SanitizationService;
 import com.group15.hospital.service.preemption.EmergencyPreemptionService;
 import com.group15.hospital.service.preemption.EquipmentMaintenanceService;
 import com.group15.hospital.service.preemption.WaitlistManager;
+import com.group15.hospital.ui.admin.AdminDashboardPanel;
+import com.group15.hospital.ui.admin.TriageRegistrationPanel;
 import com.group15.hospital.ui.clinical.EmergencyOverrideDialog;
 import com.group15.hospital.ui.clinical.EquipmentManagementPanel;
 import com.group15.hospital.ui.operations.AmbulanceTerminalPanel;
@@ -18,16 +22,17 @@ import javax.swing.border.EmptyBorder;
 import java.awt.*;
 
 /**
- * Main host container window for the Multi-Hospital Bed Allocation System.
+ * Main dashboard container for the Multi-Hospital Real-Time Bed Allocation Network.
  * <p>
  * Aggregates all operational Swing panels across clinical, dispatch, sanitization,
- * and emergency pre-emption services inside a responsive {@link JTabbedPane}.
+ * admin triage, and emergency pre-emption services inside a role-aware {@link JTabbedPane}.
  * </p>
  *
- * @author Group 15 [Shared]
+ * @author Group 15 [Shared: Saksham, Krishna, Siddhant]
  */
 public class MainDashboardFrame extends JFrame {
 
+    private final User currentUser;
     private final JTabbedPane tabbedPane;
 
     // DAOs
@@ -46,7 +51,12 @@ public class MainDashboardFrame extends JFrame {
     private final SanitizationService sanitizationService;
 
     public MainDashboardFrame() {
-        super("Multi-Hospital Bed Allocation & Emergency Dispatch System (Group 15)");
+        this(new User("admin", "admin123", "Chief Administrator", UserRole.ADMIN, 1));
+    }
+
+    public MainDashboardFrame(User user) {
+        super("Multi-Hospital Bed Allocation & Emergency Dispatch Network (Group 15)");
+        this.currentUser = (user != null) ? user : new User("admin", "admin123", "Chief Administrator", UserRole.ADMIN, 1);
 
         // 1. Initialize DAOs
         this.bedDAO = new BedDAO();
@@ -63,42 +73,47 @@ public class MainDashboardFrame extends JFrame {
         this.ambulanceDispatchService = new AmbulanceDispatchService(ambulanceDAO, alertDAO, alertManager);
         this.sanitizationService = new SanitizationService(alertDAO, alertManager, waitlistManager);
 
-        // 3. Register Global Triage Alert Observer for popups
+        // 3. Register Global Triage Alert Observer for Popups
         TriageAlertPopupHandler popupHandler = new TriageAlertPopupHandler(alertDAO, this);
         this.alertManager.registerObserver(popupHandler);
 
-        // 4. Configure Frame Layout
+        // 4. Configure Window Layout
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setPreferredSize(new Dimension(1100, 750));
-        setMinimumSize(new Dimension(900, 600));
+        setPreferredSize(new Dimension(1150, 780));
+        setMinimumSize(new Dimension(900, 650));
 
         JPanel mainPanel = new JPanel(new BorderLayout(8, 8));
         mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
 
-        // Top Header & Action Bar
+        // Top Header
         JPanel headerPanel = createHeaderPanel();
         mainPanel.add(headerPanel, BorderLayout.NORTH);
 
-        // Tabbed Panel for Modules
+        // Tabbed Module Container
         this.tabbedPane = new JTabbedPane();
         tabbedPane.setFont(new Font("SansSerif", Font.BOLD, 13));
 
-        // Tab 1: Equipment Management (Krishna - P2)
+        // Tab 1: Triage Registration & Bed Search (Saksham - P1)
+        tabbedPane.addTab("🏥 Triage & Allocation", new TriageRegistrationPanel());
+
+        // Tab 2: Equipment Management & Maintenance (Krishna - P2)
         EquipmentManagementPanel equipmentPanel = new EquipmentManagementPanel(maintenanceService);
         tabbedPane.addTab("⚙️ Equipment Management", equipmentPanel);
 
-        // Tab 2: Ambulance Dispatch & Reservations (Siddhant - P4)
+        // Tab 3: Ambulance Terminal & Reservations (Siddhant - P4)
         AmbulanceTerminalPanel ambulancePanel = new AmbulanceTerminalPanel(ambulanceDAO, ambulanceDispatchService);
         tabbedPane.addTab("🚑 Ambulance Terminal", ambulancePanel);
 
-        // Tab 3: Sanitization Staff Terminal (Siddhant - P4)
+        // Tab 4: Sanitization Staff Terminal (Siddhant - P4)
         SanitizationStaffPanel sanitizationPanel = new SanitizationStaffPanel(sanitizationService);
         tabbedPane.addTab("🧹 Sanitization Staff", sanitizationPanel);
 
-        // Tab 4: Hospital Admin & Triage (Placeholder for Saksham - P1)
-        tabbedPane.addTab("🏥 Admin & Triage (P1)", createPlaceholderPanel("Admin & Triage Registration Panel (P1 - Saksham)"));
+        // Tab 5: Hospital Administration (Saksham - P1)
+        if (currentUser.hasAdminPrivileges()) {
+            tabbedPane.addTab("⚙ Hospital Administration", new AdminDashboardPanel());
+        }
 
-        // Tab 5: Isolation & Billing (Placeholder for Jatin - P3)
+        // Tab 6: Ward Topology & Live Billing (Placeholder for Jatin - P3)
         tabbedPane.addTab("💳 Billing & Isolation (P3)", createPlaceholderPanel("Ward Topology Isolation & Live Billing Panel (P3 - Jatin)"));
 
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
@@ -106,7 +121,11 @@ public class MainDashboardFrame extends JFrame {
         // Bottom Status Bar
         JPanel statusBar = new JPanel(new BorderLayout());
         statusBar.setBorder(new EmptyBorder(4, 4, 4, 4));
-        JLabel statusLabel = new JLabel("System Online | All services running in real-time | Active Hospital: City Central Hospital");
+        String statusText = String.format("System Online | All services running in real-time | Active Hospital ID: %s | User: %s (%s)",
+                currentUser.getHospitalId() != null ? currentUser.getHospitalId() : "Network Central",
+                currentUser.getFullName(),
+                currentUser.getRole().getDisplayName());
+        JLabel statusLabel = new JLabel(statusText);
         statusLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
         statusBar.add(statusLabel, BorderLayout.WEST);
         mainPanel.add(statusBar, BorderLayout.SOUTH);
@@ -118,17 +137,22 @@ public class MainDashboardFrame extends JFrame {
 
     private JPanel createHeaderPanel() {
         JPanel header = new JPanel(new BorderLayout(10, 10));
-        header.setBorder(new EmptyBorder(5, 5, 8, 5));
+        header.setBackground(new Color(30, 41, 59));
+        header.setBorder(BorderFactory.createEmptyBorder(10, 16, 10, 16));
 
-        JLabel title = new JLabel("🏥 Multi-Hospital Real-Time Bed Allocation Network");
-        title.setFont(new Font("SansSerif", Font.BOLD, 18));
-        header.add(title, BorderLayout.WEST);
+        // System Title
+        JLabel titleLabel = new JLabel("🏥 Multi-Hospital Real-Time Emergency Bed Network");
+        titleLabel.setFont(new Font("SansSerif", Font.BOLD, 18));
+        titleLabel.setForeground(Color.WHITE);
+        header.add(titleLabel, BorderLayout.WEST);
 
-        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        // Action Panel (Emergency Override Dialog + User Info + Logout)
+        JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 0));
+        actionPanel.setOpaque(false);
 
-        JButton overrideBtn = new JButton("🚨 Emergency Override Dialog");
-        overrideBtn.setFont(new Font("SansSerif", Font.BOLD, 13));
-        overrideBtn.setBackground(new Color(180, 20, 20));
+        JButton overrideBtn = new JButton("🚨 Emergency Override");
+        overrideBtn.setFont(new Font("SansSerif", Font.BOLD, 12));
+        overrideBtn.setBackground(new Color(220, 38, 38));
         overrideBtn.setForeground(Color.WHITE);
         overrideBtn.setFocusPainted(false);
         overrideBtn.addActionListener(e -> {
@@ -136,6 +160,20 @@ public class MainDashboardFrame extends JFrame {
             dialog.setVisible(true);
         });
         actionPanel.add(overrideBtn);
+
+        String userDesc = String.format("<html><span style='color: #cbd5e1;'>Logged in:</span> <b style='color: white;'>%s</b> <span style='color: #94a3b8;'>[%s]</span></html>",
+                currentUser.getFullName(), currentUser.getRole().name());
+        JLabel userLabel = new JLabel(userDesc);
+        userLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        actionPanel.add(userLabel);
+
+        JButton logoutBtn = new JButton("Logout");
+        logoutBtn.setFocusPainted(false);
+        logoutBtn.addActionListener(e -> {
+            dispose();
+            SwingUtilities.invokeLater(() -> new LoginFrame().setVisible(true));
+        });
+        actionPanel.add(logoutBtn);
 
         header.add(actionPanel, BorderLayout.EAST);
         return header;

@@ -1,9 +1,10 @@
 package com.group15.hospital;
 
+import com.group15.hospital.config.DatabaseConnection;
 import com.group15.hospital.exception.EquipmentLimitExceededException;
 import com.group15.hospital.model.bed.*;
 import com.group15.hospital.model.enums.*;
-import com.group15.hospital.ui.MainDashboardFrame;
+import com.group15.hospital.ui.LoginFrame;
 
 import javax.swing.*;
 import java.awt.GraphicsEnvironment;
@@ -11,17 +12,21 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  * Main application bootstrap [Shared].
  * <p>
- * Supports both full GUI dashboard mode (default) and offline/console demo
+ * Supports both full GUI mode (launches {@link LoginFrame}) and offline/console demo
  * mode via the {@code --demo} flag.
  * </p>
  *
- * @author Group 15 [Shared]
+ * @author Group 15 [Shared: Saksham, Krishna, Siddhant]
  */
 public class Main {
+
+    private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
 
     public static void main(String[] args) {
         boolean runDemo = false;
@@ -36,13 +41,29 @@ public class Main {
         if (runDemo || GraphicsEnvironment.isHeadless()) {
             runConsoleDemo();
         } else {
-            // Launch the Shared Swing MainDashboardFrame
-            SwingUtilities.invokeLater(() -> {
+            LOGGER.info("Starting Multi-Hospital Emergency Bed Allocation System...");
+
+            // 1. Set System Look and Feel for native UI appearance
+            try {
+                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+            } catch (Exception e) {
+                LOGGER.log(Level.FINE, "Using default Swing Look and Feel.");
+            }
+
+            // 2. Pre-load Database Connection in background thread
+            new Thread(() -> {
                 try {
-                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
-                } catch (Exception ignored) {}
-                MainDashboardFrame frame = new MainDashboardFrame();
-                frame.setVisible(true);
+                    DatabaseConnection.getInstance().getConnection().close();
+                    LOGGER.info("Database connection pool initialized successfully.");
+                } catch (Exception e) {
+                    LOGGER.warning("Running in local fallback mode (MySQL not reached: " + e.getMessage() + ")");
+                }
+            }).start();
+
+            // 3. Launch UI on Event Dispatch Thread (EDT)
+            SwingUtilities.invokeLater(() -> {
+                LoginFrame loginFrame = new LoginFrame();
+                loginFrame.setVisible(true);
             });
         }
     }
@@ -152,11 +173,11 @@ public class Main {
         LocalDateTime now = LocalDateTime.now();
 
         List<WaitlistEntry> waitlist = new ArrayList<>();
-        waitlist.add(new WaitlistEntry(1, 1001, "Rahul (Non-Urgent)", TriageLevel.LEVEL_5, "City Hospital", "ICU-A", now.minusMinutes(30), ""));
-        waitlist.add(new WaitlistEntry(2, 1002, "Priya (Critical)", TriageLevel.LEVEL_1, "City Hospital", "ICU-A", now.minusMinutes(10), ""));
-        waitlist.add(new WaitlistEntry(3, 1003, "Amit (Urgent)", TriageLevel.LEVEL_3, "City Hospital", "ICU-A", now.minusMinutes(20), ""));
-        waitlist.add(new WaitlistEntry(4, 1004, "Neha (Critical)", TriageLevel.LEVEL_1, "City Hospital", "ICU-A", now.minusMinutes(5), ""));
-        waitlist.add(new WaitlistEntry(5, 1005, "Saksham (Emergency)", TriageLevel.LEVEL_2, "City Hospital", "ICU-A", now.minusMinutes(15), ""));
+        waitlist.add(new WaitlistEntry(1, 1001, "Rahul (Non-Urgent)", TriageLevel.LEVEL_5, "City Hospital", "Emergency ICU Ward A", now.minusMinutes(30), ""));
+        waitlist.add(new WaitlistEntry(2, 1002, "Priya (Critical)", TriageLevel.LEVEL_1, "City Hospital", "Emergency ICU Ward A", now.minusMinutes(10), ""));
+        waitlist.add(new WaitlistEntry(3, 1003, "Amit (Urgent)", TriageLevel.LEVEL_3, "City Hospital", "Emergency ICU Ward A", now.minusMinutes(20), ""));
+        waitlist.add(new WaitlistEntry(4, 1004, "Neha (Critical)", TriageLevel.LEVEL_1, "City Hospital", "Emergency ICU Ward A", now.minusMinutes(5), ""));
+        waitlist.add(new WaitlistEntry(5, 1005, "Saksham (Emergency)", TriageLevel.LEVEL_2, "City Hospital", "Emergency ICU Ward A", now.minusMinutes(15), ""));
 
         System.out.println("  BEFORE sorting (insertion order):");
         for (int i = 0; i < waitlist.size(); i++) {
