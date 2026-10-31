@@ -3,19 +3,51 @@ package com.group15.hospital;
 import com.group15.hospital.exception.EquipmentLimitExceededException;
 import com.group15.hospital.model.bed.*;
 import com.group15.hospital.model.enums.*;
+import com.group15.hospital.ui.MainDashboardFrame;
 
+import javax.swing.*;
+import java.awt.GraphicsEnvironment;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
 /**
- * Demo launcher — showcases all implemented features without requiring
- * a database connection.
+ * Main application bootstrap [Shared].
+ * <p>
+ * Supports both full GUI dashboard mode (default) and offline/console demo
+ * mode via the {@code --demo} flag.
+ * </p>
+ *
+ * @author Group 15 [Shared]
  */
 public class Main {
 
     public static void main(String[] args) {
+        boolean runDemo = false;
+        for (String arg : args) {
+            if ("--demo".equalsIgnoreCase(arg) || "-d".equalsIgnoreCase(arg)) {
+                runDemo = true;
+                break;
+            }
+        }
+
+        // If explicitly requested or running in a headless environment, run CLI demo
+        if (runDemo || GraphicsEnvironment.isHeadless()) {
+            runConsoleDemo();
+        } else {
+            // Launch the Shared Swing MainDashboardFrame
+            SwingUtilities.invokeLater(() -> {
+                try {
+                    UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+                } catch (Exception ignored) {}
+                MainDashboardFrame frame = new MainDashboardFrame();
+                frame.setVisible(true);
+            });
+        }
+    }
+
+    public static void runConsoleDemo() {
         System.out.println("╔══════════════════════════════════════════════════════════════╗");
         System.out.println("║     MULTI-HOSPITAL BED ALLOCATION SYSTEM — DEMO OUTPUT      ║");
         System.out.println("╚══════════════════════════════════════════════════════════════╝");
@@ -37,23 +69,18 @@ public class Main {
         System.out.println("  📋 DEMO 1: Decorator Pattern — Stacking Equipment on Beds");
         System.out.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        // Step 1: Create a plain bed
         BedComponent bed = new BaseBed(101, "ICU-A", "City Hospital");
         printBed("Plain Bed", bed);
 
-        // Step 2: Add Ventilator
         bed = new VentilatorDecorator(bed);
         printBed("+ Ventilator", bed);
 
-        // Step 3: Add Oxygen
         bed = new OxygenCylinderDecorator(bed);
         printBed("+ Oxygen Cylinder", bed);
 
-        // Step 4: Add Dialysis
         bed = new DialysisDecorator(bed);
         printBed("+ Dialysis Machine", bed);
 
-        // Step 5: Add Cardiac Monitor
         bed = new CardiacMonitorDecorator(bed);
         printBed("+ Cardiac Monitor", bed);
 
@@ -66,10 +93,9 @@ public class Main {
         System.out.println("     ─────────────────────────────");
         System.out.printf("     TOTAL:           $%.2f/hr%n", bed.getHourlyCost());
 
-        // Step 6: Try adding duplicate — should fail
         System.out.println("\n  🚫 Attempting duplicate Ventilator...");
         try {
-            BedComponent duplicate = new VentilatorDecorator(bed);
+            new VentilatorDecorator(bed);
             System.out.println("     ERROR: Should not reach here!");
         } catch (EquipmentLimitExceededException e) {
             System.out.println("     ✅ Blocked: " + e.getMessage());
@@ -91,7 +117,6 @@ public class Main {
         System.out.printf("  Hours Used: %.1f | Remaining: %.1f | Usage: %.1f%%%n",
                 ventilator.getOperatingHoursUsed(), ventilator.getRemainingHours(), ventilator.getUsagePercentage());
 
-        // Add hours incrementally
         System.out.println("\n  Adding operating hours...");
         ventilator.addOperatingHours(200);
         System.out.printf("  +200 hrs → Used: %.1f | Remaining: %.1f | Usage: %.1f%%%n",
@@ -101,7 +126,6 @@ public class Main {
         System.out.printf("  +250 hrs → Used: %.1f | Remaining: %.1f | Usage: %.1f%% ⚠️ WARNING%n",
                 ventilator.getOperatingHoursUsed(), ventilator.getRemainingHours(), ventilator.getUsagePercentage());
 
-        // Try exceeding limit
         System.out.println("\n  🚫 Attempting to add 60 more hours (would exceed 500hr limit)...");
         try {
             ventilator.addOperatingHours(60);
@@ -109,7 +133,6 @@ public class Main {
             System.out.println("  ✅ Blocked: " + e.getMessage());
         }
 
-        // Maintenance reset
         System.out.println("\n  🔧 Performing maintenance...");
         ventilator.setUnderMaintenance(true);
         System.out.println("  Status: Under Maintenance = " + ventilator.isUnderMaintenance());
@@ -196,10 +219,9 @@ public class Main {
 
         System.out.println("  Bed #999 (VACANT) — 10 threads trying to book simultaneously...\n");
 
-        Thread[] threads = new Thread[threadCount];
         for (int i = 0; i < threadCount; i++) {
             final int idx = i;
-            threads[i] = new Thread(() -> {
+            new Thread(() -> {
                 try {
                     startGate.await();
                     bed.assignPatient(idx, "Patient-" + idx, TriageLevel.LEVEL_3);
@@ -211,11 +233,10 @@ public class Main {
                 } finally {
                     done.countDown();
                 }
-            });
-            threads[i].start();
+            }).start();
         }
 
-        startGate.countDown(); // Release all threads at once
+        startGate.countDown();
         try { done.await(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
 
         System.out.println("\n  RESULT:");
@@ -225,7 +246,6 @@ public class Main {
         System.out.println("    Assigned to: " + bed.getCurrentPatientName());
     }
 
-    // ═══════════════════════════════════════════════════════════════
     private static void printBed(String label, BedComponent bed) {
         System.out.printf("  %-22s → Cost: $%.2f/hr | Equipment: %s%n",
                 label, bed.getHourlyCost(), bed.getAttachedEquipment());
