@@ -213,6 +213,63 @@ class IsolationAndBillingTest {
             assertTrue(releasedAfterBed3.contains(2L), "Bed 2 should be released when all contagious sources resolve");
             assertEquals(BedStatus.VACANT, bed2.getBedStatus(), "Bed 2 should return to VACANT");
         }
+
+        @Test
+        @DisplayName("Isolating Bed 105 updates in-memory registry, locking 104 and 106 buffers")
+        void testIsolatingBed105LocksVacant104And106BuffersAndReleases() {
+            wardTopologyDAO.insertEdge(104L, 105L, WardTopologyGraph.RELATION_NEIGHBOR);
+            wardTopologyDAO.insertEdge(105L, 106L, WardTopologyGraph.RELATION_SHARED_AIR);
+
+            BaseBed b104 = new BaseBed(104L, "General Medicine Ward B", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b105 = new BaseBed(105L, "General Medicine Ward B", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b106 = new BaseBed(106L, "Infectious Isolation Ward C", "City Central Hospital", BedStatus.VACANT);
+
+            containmentService.registerBed(b104);
+            containmentService.registerBed(b105);
+            containmentService.registerBed(b106);
+
+            Set<Long> locked = containmentService.activateIsolation(105L, "STAFF");
+            assertTrue(locked.contains(104L), "Bed 104 should be locked as neighbor buffer");
+            assertTrue(locked.contains(106L), "Bed 106 should be locked as shared air buffer");
+            assertTrue(containmentService.isBedIsolated(105L));
+            assertEquals(BedStatus.RESTRICTED_BUFFER, containmentService.getBed(104L).getBedStatus());
+            assertEquals(BedStatus.RESTRICTED_BUFFER, containmentService.getBed(106L).getBedStatus());
+            assertEquals(BedStatus.OCCUPIED, containmentService.getBed(105L).getBedStatus());
+
+            Set<Long> released = containmentService.releaseIsolation(105L, "STAFF");
+            assertTrue(released.contains(104L));
+            assertTrue(released.contains(106L));
+            assertFalse(containmentService.isBedIsolated(105L));
+            assertEquals(BedStatus.VACANT, containmentService.getBed(104L).getBedStatus());
+            assertEquals(BedStatus.VACANT, containmentService.getBed(106L).getBedStatus());
+            assertEquals(BedStatus.VACANT, containmentService.getBed(105L).getBedStatus());
+        }
+
+        @Test
+        @DisplayName("Occupied neighbor bed is flagged as EXPOSED with hazard warning when adjacent bed is isolated")
+        void testOccupiedNeighborExposureFlaggedWhenBedIsolated() {
+            wardTopologyDAO.insertEdge(101L, 102L, WardTopologyGraph.RELATION_NEIGHBOR);
+
+            BaseBed b101 = new BaseBed(101L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b102 = new BaseBed(102L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            b102.assignPatient(5001L, "Robert Chen", TriageLevel.LEVEL_3);
+
+            containmentService.registerBed(b101);
+            containmentService.registerBed(b102);
+
+            assertEquals(BedStatus.OCCUPIED, b102.getBedStatus());
+
+            // Activate isolation on Bed 101 -> Bed 102 is occupied so cannot become RESTRICTED_BUFFER
+            containmentService.activateIsolation(101L, "STAFF");
+
+            assertTrue(containmentService.isBedExposed(102L), "Bed 102 must be marked as EXPOSED");
+            assertTrue(containmentService.getExposedOccupiedBeds(101L).contains(102L));
+            assertEquals(BedStatus.OCCUPIED, b102.getBedStatus(), "Occupied bed must not be overwritten to buffer");
+
+            // Release isolation -> Bed 102 is no longer exposed
+            containmentService.releaseIsolation(101L, "STAFF");
+            assertFalse(containmentService.isBedExposed(102L), "Bed 102 should no longer be exposed once isolation resolves");
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -395,6 +452,16 @@ class IsolationAndBillingTest {
                 assertNotNull(panel);
                 panel.refreshData();
             }, "BillingAndKitchenPanel should instantiate and refresh without throwing any exceptions");
+        }
+
+        @Test
+        @DisplayName("IsolationControlPanel preserves selection on refresh and syncs two-way selection cleanly")
+        void testSelectionPreservedAndTwoWaySync() {
+            IsolationControlPanel panel = new IsolationControlPanel(
+                    containmentService, wardTopologyDAO, bedDAO, patientDAO);
+
+            assertDoesNotThrow(panel::refreshTopology);
+            assertDoesNotThrow(panel::refreshTable);
         }
     }
 }

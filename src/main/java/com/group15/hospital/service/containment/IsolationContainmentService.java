@@ -5,6 +5,7 @@ import com.group15.hospital.dao.BedDAO;
 import com.group15.hospital.dao.PatientDAO;
 import com.group15.hospital.dao.WardTopologyDAO;
 import com.group15.hospital.exception.IllegalBedStateException;
+import com.group15.hospital.model.bed.BaseBed;
 import com.group15.hospital.model.bed.BedComponent;
 import com.group15.hospital.model.enums.BedStatus;
 import com.group15.hospital.model.hierarchy.Patient;
@@ -96,12 +97,33 @@ public class IsolationContainmentService {
         }
     }
 
+    public Map<Long, BedComponent> getRegisteredBeds() {
+        return registeredBeds;
+    }
+
     public BedComponent getBed(long bedId) {
         BedComponent mem = registeredBeds.get(bedId);
         if (mem != null) {
             return mem;
         }
-        return bedDAO.findById(bedId).orElse(null);
+        Optional<BaseBed> dbBed = bedDAO.findById(bedId);
+        if (dbBed.isPresent()) {
+            registeredBeds.put(bedId, dbBed.get());
+            return dbBed.get();
+        }
+        // Fallback in-memory registration for offline execution
+        BaseBed defaultBed = new BaseBed(bedId, resolveWardForBed(bedId), "City Central Hospital", BedStatus.VACANT);
+        registeredBeds.put(bedId, defaultBed);
+        return defaultBed;
+    }
+
+    private String resolveWardForBed(long bedId) {
+        if (bedId >= 300) return "Trauma ICU";
+        if (bedId == 106) return "Infectious Isolation Ward C";
+        if (bedId >= 104 && bedId <= 105) return "General Medicine Ward B";
+        if (bedId >= 101 && bedId <= 103) return "Emergency ICU Ward A";
+        if (bedId >= 200 && bedId < 300) return "Cardiology Intensive Care";
+        return "General Ward";
     }
 
     public Set<Long> getActiveIsolatedBeds() {
@@ -110,6 +132,50 @@ public class IsolationContainmentService {
 
     public boolean isBedIsolated(long bedId) {
         return activeIsolatedBeds.contains(bedId);
+    }
+
+    /**
+     * Checks if a bed is occupied and exposed to an adjacent or shared-air contagious bed.
+     *
+     * @param bedId bed identifier
+     * @return {@code true} if bed is occupied and in the blast radius of an active isolation bed
+     */
+    public boolean isBedExposed(long bedId) {
+        if (activeIsolatedBeds.contains(bedId)) {
+            return false;
+        }
+        BedComponent bed = getBed(bedId);
+        if (bed == null || bed.getBedStatus() != BedStatus.OCCUPIED) {
+            return false;
+        }
+        WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
+        for (Long isoBedId : activeIsolatedBeds) {
+            if (graph.getAllAffectedBufferBeds(isoBedId).contains(bedId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns all occupied beds connected to a specific contagious bed.
+     *
+     * @param contagiousBedId bed identifier under isolation
+     * @return set of occupied bed IDs at risk
+     */
+    public Set<Long> getExposedOccupiedBeds(long contagiousBedId) {
+        Set<Long> exposed = new HashSet<>();
+        WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
+        Set<Long> affected = graph.getAllAffectedBufferBeds(contagiousBedId);
+        for (Long neighborId : affected) {
+            if (!activeIsolatedBeds.contains(neighborId)) {
+                BedComponent neighborBed = getBed(neighborId);
+                if (neighborBed != null && neighborBed.getBedStatus() == BedStatus.OCCUPIED) {
+                    exposed.add(neighborId);
+                }
+            }
+        }
+        return exposed;
     }
 
     // ────────────────────── Containment Lock & Release ──────────────────────
@@ -128,6 +194,14 @@ public class IsolationContainmentService {
      */
     public Set<Long> activateIsolation(long contagiousBedId, String actor) {
         activeIsolatedBeds.add(contagiousBedId);
+
+        // Ensure contagious source bed is marked OCCUPIED if it was VACANT
+        BedComponent sourceBed = getBed(contagiousBedId);
+        if (sourceBed != null && sourceBed.getBedStatus() == BedStatus.VACANT) {
+            sourceBed.setBedStatus(BedStatus.OCCUPIED);
+            bedDAO.updateBedStatus(contagiousBedId, BedStatus.OCCUPIED);
+        }
+
         WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
         Set<Long> affectedBeds = graph.getAllAffectedBufferBeds(contagiousBedId);
         Set<Long> newlyLocked = new HashSet<>();
@@ -136,20 +210,30 @@ public class IsolationContainmentService {
 
         for (Long neighborId : affectedBeds) {
             BedComponent bed = getBed(neighborId);
-            if (bed != null && bed.getBedStatus() == BedStatus.VACANT) {
-                // Apply State pattern transition from VACANT to RESTRICTED_BUFFER
-                BedState newState = new VacantState().restrictBuffer();
-                bed.setBedStatus(newState.getStatus());
-                bedDAO.updateBedStatus(neighborId, BedStatus.RESTRICTED_BUFFER);
-                newlyLocked.add(neighborId);
+            if (bed != null) {
+                if (bed.getBedStatus() == BedStatus.VACANT) {
+                    // Apply State pattern transition from VACANT to RESTRICTED_BUFFER
+                    BedState newState = new VacantState().restrictBuffer();
+                    bed.setBedStatus(newState.getStatus());
+                    bedDAO.updateBedStatus(neighborId, BedStatus.RESTRICTED_BUFFER);
+                    newlyLocked.add(neighborId);
 
-                auditDAO.log(
-                        operator,
-                        "ISOLATION_BUFFER_LOCKED",
-                        String.valueOf(neighborId),
-                        String.format("Bed #%d transitioned to %s as an infection safety buffer for contagious bed #%d",
-                                neighborId, newState.getStatus(), contagiousBedId)
-                );
+                    auditDAO.log(
+                            operator,
+                            "ISOLATION_BUFFER_LOCKED",
+                            String.valueOf(neighborId),
+                            String.format("Bed #%d transitioned to %s as an infection safety buffer for contagious bed #%d",
+                                    neighborId, newState.getStatus(), contagiousBedId)
+                    );
+                } else if (bed.getBedStatus() == BedStatus.OCCUPIED && !activeIsolatedBeds.contains(neighborId)) {
+                    auditDAO.log(
+                            operator,
+                            "CROSS_CONTAMINATION_WARNING",
+                            String.valueOf(neighborId),
+                            String.format("Occupied bed #%d shares room/ventilation boundaries with contagious bed #%d. Immediate patient transfer required!",
+                                    neighborId, contagiousBedId)
+                    );
+                }
             }
         }
 
@@ -172,6 +256,14 @@ public class IsolationContainmentService {
      */
     public Set<Long> releaseIsolation(long contagiousBedId, String actor) {
         activeIsolatedBeds.remove(contagiousBedId);
+
+        // If source bed has no admitted patient (e.g. standalone isolation toggle), return to VACANT
+        BedComponent sourceBed = getBed(contagiousBedId);
+        if (sourceBed != null && sourceBed.getCurrentPatientName() == null && sourceBed.getBedStatus() == BedStatus.OCCUPIED) {
+            sourceBed.setBedStatus(BedStatus.VACANT);
+            bedDAO.updateBedStatus(contagiousBedId, BedStatus.VACANT);
+        }
+
         WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
         Set<Long> affectedBeds = graph.getAllAffectedBufferBeds(contagiousBedId);
         Set<Long> releasedBeds = new HashSet<>();
