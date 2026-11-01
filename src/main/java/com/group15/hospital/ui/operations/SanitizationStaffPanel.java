@@ -2,6 +2,7 @@ package com.group15.hospital.ui.operations;
 
 import com.group15.hospital.exception.IllegalBedStateException;
 import com.group15.hospital.model.enums.BedStatus;
+import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.state.BedState;
 import com.group15.hospital.service.dispatch.SanitizationService;
 
@@ -306,6 +307,7 @@ public class SanitizationStaffPanel extends JPanel {
 
         String ward = "ICU";
         addDirtyBed(newBedId, selectedHospital, ward);
+        sanitizationService.seedWaitlistPatient(selectedHospital, "Vikram Seth", TriageLevel.LEVEL_1);
         refreshTable();
 
         JOptionPane.showMessageDialog(this,
@@ -351,6 +353,7 @@ public class SanitizationStaffPanel extends JPanel {
         addDirtyBed(402L, "City Central Hospital", "Emergency Ward");
         addDirtyBed(403L, "Memorial Care Hospital", "ICU");
         addDirtyBed(404L, "Metro General Hospital", "General Ward");
+        sanitizationService.seedWaitlistPatient("City Central Hospital", "Vikram Seth", TriageLevel.LEVEL_1);
     }
 
     public DefaultTableModel getDirtyTableModel() {

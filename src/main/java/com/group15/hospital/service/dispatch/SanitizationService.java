@@ -5,6 +5,7 @@ import com.group15.hospital.exception.IllegalBedStateException;
 import com.group15.hospital.model.ambulance.SystemAlert;
 import com.group15.hospital.model.bed.WaitlistEntry;
 import com.group15.hospital.model.enums.BedStatus;
+import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.enums.UserRole;
 import com.group15.hospital.model.state.BedState;
 import com.group15.hospital.service.preemption.WaitlistManager;
@@ -104,6 +105,24 @@ public class SanitizationService {
 
     public void seedBedState(long bedId, BedStatus status, String hospitalName, String wardName) {
         seedBedState(bedId, BedState.fromStatus(status), hospitalName, wardName);
+    }
+
+    /**
+     * Seeds a waiting patient in the WaitlistManager for waitlist matching demonstrations (U6 Alt Flow 1).
+     */
+    public void seedWaitlistPatient(String hospitalName, String patientName, TriageLevel triage) {
+        String hosp = (hospitalName != null && !hospitalName.isBlank()) ? hospitalName : "City Central Hospital";
+        String name = (patientName != null && !patientName.isBlank()) ? patientName : "Vikram Seth";
+        TriageLevel level = (triage != null) ? triage : TriageLevel.LEVEL_1;
+        WaitlistEntry entry = new WaitlistEntry(
+                888L,
+                name,
+                level,
+                hosp,
+                "ICU",
+                "Awaiting ICU bed allocation"
+        );
+        waitlistManager.addToWaitlist(entry);
     }
 
     /**
