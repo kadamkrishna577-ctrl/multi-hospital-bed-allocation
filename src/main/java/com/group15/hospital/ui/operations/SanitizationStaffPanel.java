@@ -355,4 +355,35 @@ public class SanitizationStaffPanel extends JPanel {
     public JTable getDirtyTable() {
         return dirtyTable;
     }
+
+    public DefaultTableModel getLogTableModel() {
+        return logTableModel;
+    }
+
+    public void removeDirtyBed(long bedId) {
+        dirtyBedRegistry.remove(bedId);
+        refreshTable();
+    }
+
+    public boolean performSanitization(long bedId, String staffName) {
+        DirtyBedRecord r = dirtyBedRegistry.get(bedId);
+        if (r == null) {
+            sanitizationService.markRoomSanitized(bedId, staffName);
+            return true;
+        }
+        long start = System.currentTimeMillis();
+        sanitizationService.markRoomSanitized(bedId, staffName, r.hospitalName, r.wardName);
+        long elapsed = System.currentTimeMillis() - start;
+        dirtyBedRegistry.remove(bedId);
+        logTableModel.insertRow(0, new Object[]{
+                LocalDateTime.now().format(TIME_FMT),
+                bedId,
+                r.hospitalName,
+                r.wardName,
+                staffName,
+                String.format("REQUIRES_SANITIZATION -> VACANT (%d ms)", elapsed)
+        });
+        refreshTable();
+        return true;
+    }
 }

@@ -115,9 +115,9 @@ public class WaitlistManager {
                 waitlistQueue.add(persisted);
                 LOGGER.info("Added to waitlist: " + persisted);
             } catch (SQLException e) {
-                LOGGER.log(Level.SEVERE, "Failed to persist waitlist entry for patient: " +
-                           entry.getPatientName(), e);
-                throw new RuntimeException("Failed to add patient to waitlist", e);
+                LOGGER.log(Level.WARNING, "Failed to persist waitlist entry for patient (using in-memory fallback): " +
+                           entry.getPatientName());
+                waitlistQueue.add(entry);
             }
         }
     }

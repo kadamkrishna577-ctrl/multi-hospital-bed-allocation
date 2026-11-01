@@ -150,6 +150,12 @@ public class AmbulanceDispatchService {
         );
         AmbulanceReservation saved = ambulanceDAO.createReservationAtomic(reservation);
 
+        // Update in-memory index in service so subsequent searches select other vacant beds
+        ConcurrentHashMap<Long, BedStatus> localBeds = simulatedHospitalBeds.get(preferredHospital);
+        if (localBeds != null) {
+            localBeds.put(bestBedId, BedStatus.RESERVED_EN_ROUTE);
+        }
+
         // 5. Mark ambulance as dispatched
         ambulanceDAO.updateAmbulanceAvailability(ambulanceId, false, preferredHospital);
 
@@ -208,6 +214,10 @@ public class AmbulanceDispatchService {
 
         AmbulanceReservation existing = ambulanceDAO.findReservationById(reservationId)
                 .orElseThrow(() -> new IllegalArgumentException("Reservation #" + reservationId + " not found"));
+
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(existing.getStatus())) {
+            throw new IllegalStateException("Reservation #" + reservationId + " has already arrived at destination and cannot be rerouted.");
+        }
 
         String currentHospital = existing.getHospitalName();
         TriageLevel triage = existing.getPatientTriage();
@@ -387,7 +397,7 @@ public class AmbulanceDispatchService {
         ConcurrentHashMap<Long, BedStatus> hospitalBeds = simulatedHospitalBeds.get(hospitalName);
         if (hospitalBeds != null) {
             for (Map.Entry<Long, BedStatus> entry : hospitalBeds.entrySet()) {
-                if (entry.getValue() == BedStatus.VACANT) {
+                if (entry.getValue() == BedStatus.VACANT && ambulanceDAO.getBedStatus(entry.getKey()) == BedStatus.VACANT) {
                     return entry.getKey();
                 }
             }

@@ -102,6 +102,11 @@ public class AmbulanceDAO {
             "hospital_name, ward_name, assigned_bed_id, reserved_at, expires_at, status, rerouted_from_hospital " +
             "FROM ambulance_reservations WHERE status = 'RESERVED_EN_ROUTE'";
 
+    private static final String SQL_FIND_ALL_RESERVATIONS =
+            "SELECT reservation_id, ambulance_id, ambulance_type, patient_name, patient_triage, required_equipment, " +
+            "hospital_name, ward_name, assigned_bed_id, reserved_at, expires_at, status, rerouted_from_hospital " +
+            "FROM ambulance_reservations ORDER BY reservation_id DESC";
+
     public AmbulanceDAO() {
         initDefaultFleet();
     }
@@ -450,6 +455,7 @@ public class AmbulanceDAO {
             simulatedBedStore.put(bedId, BedStatus.OCCUPIED);
             res.setStatus(AmbulanceReservation.STATUS_ARRIVED);
             reservationStore.put(reservationId, res);
+            updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());
             LOGGER.info("Confirmed patient arrival for reservation #" + reservationId + " into bed #" + bedId);
         } finally {
             lock.unlock();
@@ -594,6 +600,30 @@ public class AmbulanceDAO {
 
         return reservationStore.values().stream()
                 .filter(r -> AmbulanceReservation.STATUS_RESERVED.equals(r.getStatus()))
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Returns all reservations (in-flight holds, confirmed arrivals, expired, and rerouted).
+     */
+    public List<AmbulanceReservation> findAllReservations() {
+        List<AmbulanceReservation> list = new ArrayList<>();
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(SQL_FIND_ALL_RESERVATIONS);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                list.add(mapReservationRow(rs));
+            }
+            if (!list.isEmpty()) {
+                list.forEach(r -> reservationStore.put(r.getReservationId(), r));
+                return list;
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.FINE, "MySQL unavailable for findAllReservations: " + e.getMessage());
+        }
+
+        return reservationStore.values().stream()
+                .sorted((a, b) -> Long.compare(b.getReservationId(), a.getReservationId()))
                 .collect(Collectors.toList());
     }
 
