@@ -236,6 +236,8 @@ public class SanitizationStaffPanel extends JPanel {
             staffName = "Cleaning Staff (Janitorial)";
         }
 
+        int cleanedCount = 0;
+
         // Loop over selected beds (supports U6 Alt Flow 2: several rooms marked clean one after another)
         for (int row : selectedRows) {
             long bedId = (Long) dirtyTableModel.getValueAt(row, 0);
@@ -265,6 +267,7 @@ public class SanitizationStaffPanel extends JPanel {
 
                 // Remove from dirty registry
                 dirtyBedRegistry.remove(bedId);
+                cleanedCount++;
 
                 // Add to history log
                 logTableModel.insertRow(0, new Object[]{
@@ -288,8 +291,10 @@ public class SanitizationStaffPanel extends JPanel {
         }
 
         refreshTable();
-        JOptionPane.showMessageDialog(this, "Selected rooms sanitized! Pop-up notifications broadcast to triage screens in < 0.5s.",
-                "Sanitization Complete", JOptionPane.INFORMATION_MESSAGE);
+        if (cleanedCount > 0) {
+            JOptionPane.showMessageDialog(this, "Selected rooms sanitized! Pop-up notifications broadcast to triage screens in < 0.5s.",
+                    "Sanitization Complete", JOptionPane.INFORMATION_MESSAGE);
+        }
     }
 
     private void handleSimulateDirtyBed() {
