@@ -1,10 +1,10 @@
 package com.group15.hospital.model.enums;
 
 public enum EquipmentType {
-    VENTILATOR("ventilator", 150.00, 500),
-    OXYGEN("oxygen", 40.0, 1000),
-    DIALYSIS("dialysis", 200.0, 300),
-    MONITOR("cardiac_monitor", 60.0, 1500);
+    VENTILATOR("Ventilator", 150.00, 500),
+    OXYGEN("Oxygen Cylinder", 40.0, 1000),
+    DIALYSIS("Dialysis Machine", 200.0, 300),
+    MONITOR("Cardiac Monitor", 60.0, 1500);
 
     // fields for cost and hourly usage limits...
     public final String displayName;
@@ -56,4 +56,3 @@ public enum EquipmentType {
         }
     }
 }
-

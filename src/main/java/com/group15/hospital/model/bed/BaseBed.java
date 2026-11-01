@@ -110,29 +110,29 @@ public class BaseBed implements BedComponent {
     // ────────────────────────── Bed Status ────────────────────────────
 
     @Override
-    public BedStatus getBedStatus() {
+    public synchronized BedStatus getBedStatus() {
         return bedStatus;
     }
 
     @Override
-    public void setBedStatus(BedStatus status) {
+    public synchronized void setBedStatus(BedStatus status) {
         this.bedStatus = Objects.requireNonNull(status, "status must not be null");
     }
 
     // ──────────────────────── Patient State ───────────────────────────
 
     @Override
-    public Long getCurrentPatientId() {
+    public synchronized Long getCurrentPatientId() {
         return currentPatientId;
     }
 
     @Override
-    public String getCurrentPatientName() {
+    public synchronized String getCurrentPatientName() {
         return currentPatientName;
     }
 
     @Override
-    public TriageLevel getCurrentTriageLevel() {
+    public synchronized TriageLevel getCurrentTriageLevel() {
         return currentTriageLevel;
     }
 
@@ -148,7 +148,7 @@ public class BaseBed implements BedComponent {
      *                                  RESTRICTED_BUFFER, or already OCCUPIED
      */
     @Override
-    public void assignPatient(long patientId, String patientName, TriageLevel triageLevel) {
+    public synchronized void assignPatient(long patientId, String patientName, TriageLevel triageLevel) {
         if (bedStatus == BedStatus.REQUIRES_SANITIZATION) {
             throw new IllegalBedStateException(
                     "Cannot assign patient to bed #" + bedId +
@@ -176,7 +176,7 @@ public class BaseBed implements BedComponent {
      * {@link BedStatus#REQUIRES_SANITIZATION}.
      */
     @Override
-    public void dischargePatient() {
+    public synchronized void dischargePatient() {
         this.currentPatientId = null;
         this.currentPatientName = null;
         this.currentTriageLevel = null;

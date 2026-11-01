@@ -3,6 +3,9 @@ package com.group15.hospital.ui;
 import com.group15.hospital.dao.*;
 import com.group15.hospital.model.enums.UserRole;
 import com.group15.hospital.model.hierarchy.User;
+import com.group15.hospital.service.auxiliary.BillingService;
+import com.group15.hospital.service.auxiliary.KitchenService;
+import com.group15.hospital.service.containment.IsolationContainmentService;
 import com.group15.hospital.service.dispatch.AlertNotificationManager;
 import com.group15.hospital.service.dispatch.AmbulanceDispatchService;
 import com.group15.hospital.service.dispatch.SanitizationService;
@@ -11,6 +14,8 @@ import com.group15.hospital.service.preemption.EquipmentMaintenanceService;
 import com.group15.hospital.service.preemption.WaitlistManager;
 import com.group15.hospital.ui.admin.AdminDashboardPanel;
 import com.group15.hospital.ui.admin.TriageRegistrationPanel;
+import com.group15.hospital.ui.auxiliary.BillingAndKitchenPanel;
+import com.group15.hospital.ui.auxiliary.IsolationControlPanel;
 import com.group15.hospital.ui.clinical.EmergencyOverrideDialog;
 import com.group15.hospital.ui.clinical.EquipmentManagementPanel;
 import com.group15.hospital.ui.operations.AmbulanceTerminalPanel;
@@ -25,10 +30,11 @@ import java.awt.*;
  * Main dashboard container for the Multi-Hospital Real-Time Bed Allocation Network.
  * <p>
  * Aggregates all operational Swing panels across clinical, dispatch, sanitization,
- * admin triage, and emergency pre-emption services inside a role-aware {@link JTabbedPane}.
+ * admin triage, emergency pre-emption services, and auxiliary billing &amp; infection containment
+ * inside a role-aware {@link JTabbedPane}.
  * </p>
  *
- * @author Group 15 [Shared: Saksham, Krishna, Siddhant]
+ * @author Group 15 [Shared: Saksham, Krishna, Jatin, Siddhant]
  */
 public class MainDashboardFrame extends JFrame {
 
@@ -41,6 +47,10 @@ public class MainDashboardFrame extends JFrame {
     private final WaitlistDAO waitlistDAO;
     private final AmbulanceDAO ambulanceDAO;
     private final AlertDAO alertDAO;
+    private final WardTopologyDAO wardTopologyDAO;
+    private final BillingDAO billingDAO;
+    private final KitchenOrderDAO kitchenOrderDAO;
+    private final PatientDAO patientDAO;
 
     // Services
     private final WaitlistManager waitlistManager;
@@ -49,6 +59,9 @@ public class MainDashboardFrame extends JFrame {
     private final AlertNotificationManager alertManager;
     private final AmbulanceDispatchService ambulanceDispatchService;
     private final SanitizationService sanitizationService;
+    private final BillingService billingService;
+    private final KitchenService kitchenService;
+    private final IsolationContainmentService isolationService;
 
     public MainDashboardFrame() {
         this(new User("admin", "admin123", "Chief Administrator", UserRole.ADMIN, 1));
@@ -64,6 +77,10 @@ public class MainDashboardFrame extends JFrame {
         this.waitlistDAO = new WaitlistDAO();
         this.ambulanceDAO = new AmbulanceDAO();
         this.alertDAO = new AlertDAO();
+        this.wardTopologyDAO = new WardTopologyDAO();
+        this.billingDAO = new BillingDAO();
+        this.kitchenOrderDAO = new KitchenOrderDAO();
+        this.patientDAO = new PatientDAO();
 
         // 2. Initialize Services
         this.waitlistManager = new WaitlistManager(waitlistDAO, true);
@@ -72,6 +89,16 @@ public class MainDashboardFrame extends JFrame {
         this.alertManager = AlertNotificationManager.getInstance(alertDAO);
         this.ambulanceDispatchService = new AmbulanceDispatchService(ambulanceDAO, alertDAO, alertManager);
         this.sanitizationService = new SanitizationService(alertDAO, alertManager, waitlistManager);
+
+        // Phase 3 Auxiliary & Isolation Services (Jatin - P3)
+        AuditDAO auditDAO = new AuditDAO();
+        this.billingService = new BillingService(billingDAO, auditDAO);
+        this.kitchenService = new KitchenService(kitchenOrderDAO, auditDAO);
+        this.isolationService = new IsolationContainmentService(wardTopologyDAO, bedDAO, patientDAO, auditDAO);
+
+        // Wire Phase 3 Observers: Billing and Kitchen observe patient transfers on IsolationContainmentService
+        this.isolationService.registerListener(this.billingService);
+        this.isolationService.registerListener(this.kitchenService);
 
         // 3. Register Global Triage Alert Observer for Popups
         TriageAlertPopupHandler popupHandler = new TriageAlertPopupHandler(alertDAO, this);
@@ -113,8 +140,25 @@ public class MainDashboardFrame extends JFrame {
             tabbedPane.addTab("⚙ Hospital Administration", new AdminDashboardPanel());
         }
 
-        // Tab 6: Ward Topology & Live Billing (Placeholder for Jatin - P3)
-        tabbedPane.addTab("💳 Billing & Isolation (P3)", createPlaceholderPanel("Ward Topology Isolation & Live Billing Panel (P3 - Jatin)"));
+        // Tab 6: Ward Adjacency & Infection Containment (Jatin - P3)
+        IsolationControlPanel isolationPanel = new IsolationControlPanel(
+                isolationService, wardTopologyDAO, bedDAO, patientDAO);
+        tabbedPane.addTab("🛡️ Ward Isolation (P3)", isolationPanel);
+
+        // Tab 7: Auxiliary Billing & Kitchen Dispatch (Jatin - P3)
+        BillingAndKitchenPanel billingKitchenPanel = new BillingAndKitchenPanel(
+                billingService, kitchenService);
+        tabbedPane.addTab("💳 Billing & Kitchen (P3)", billingKitchenPanel);
+
+        // Listen for tab switching to trigger dynamic refresh
+        tabbedPane.addChangeListener(e -> {
+            Component selected = tabbedPane.getSelectedComponent();
+            if (selected == isolationPanel) {
+                isolationPanel.refreshTable();
+            } else if (selected == billingKitchenPanel) {
+                billingKitchenPanel.refreshData();
+            }
+        });
 
         mainPanel.add(tabbedPane, BorderLayout.CENTER);
 
@@ -177,15 +221,6 @@ public class MainDashboardFrame extends JFrame {
 
         header.add(actionPanel, BorderLayout.EAST);
         return header;
-    }
-
-    private JPanel createPlaceholderPanel(String moduleName) {
-        JPanel p = new JPanel(new GridBagLayout());
-        JLabel label = new JLabel("⏳ Module " + moduleName + " pending completion by assigned team member.");
-        label.setFont(new Font("SansSerif", Font.ITALIC, 14));
-        label.setForeground(Color.GRAY);
-        p.add(label);
-        return p;
     }
 
     /**

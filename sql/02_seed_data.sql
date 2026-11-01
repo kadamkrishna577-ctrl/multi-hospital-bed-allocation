@@ -95,3 +95,48 @@ ON DUPLICATE KEY UPDATE is_available=VALUES(is_available);
 -- 9. INITIAL AUDIT LOG (P1 - Saksham)
 INSERT INTO audit_logs (actor_username, action_type, entity_id, details) VALUES
 ('system', 'DATABASE_INITIALIZATION', 'SYSTEM', 'Seed mock data successfully loaded.');
+
+
+-- 10. PATIENTS (Unified P1 & P3)
+INSERT INTO patients (patient_id, full_name, age, gender, triage_level, assigned_bed_id, diet_type, admission_time, is_discharged) VALUES
+(5001, 'Robert Chen',   58, 'MALE',   'LEVEL_4', 102, 'IV_FLUIDS', DATE_SUB(NOW(), INTERVAL 4 HOUR), FALSE),
+(5002, 'Emily Davis',   34, 'FEMALE', 'LEVEL_5', 103, 'LIQUID',    DATE_SUB(NOW(), INTERVAL 24 HOUR), FALSE),
+(5003, 'James Wilson',  62, 'MALE',   'LEVEL_2', 202, 'REGULAR',   DATE_SUB(NOW(), INTERVAL 8 HOUR), FALSE),
+(5005, 'Sarah Jenkins', 45, 'FEMALE', 'LEVEL_5', 303, 'IV_FLUIDS', DATE_SUB(NOW(), INTERVAL 2 HOUR), FALSE)
+ON DUPLICATE KEY UPDATE full_name=VALUES(full_name), diet_type=VALUES(diet_type);
+
+-- 11. WARD TOPOLOGY & BED ADJACENCY (P3 - Jatin)
+INSERT INTO ward_topology (topology_id, bed_id_1, bed_id_2, relationship_type) VALUES
+(1, 101, 102, 'NEIGHBOR'),
+(2, 102, 103, 'NEIGHBOR'),
+(3, 101, 103, 'SHARED_AIR'),
+(4, 104, 105, 'NEIGHBOR'),
+(5, 201, 202, 'NEIGHBOR'),
+(6, 202, 203, 'NEIGHBOR'),
+(7, 301, 302, 'NEIGHBOR'),
+(8, 302, 303, 'SHARED_AIR')
+ON DUPLICATE KEY UPDATE relationship_type=VALUES(relationship_type);
+
+-- 12. BILLING RECORDS (P3 - Jatin)
+INSERT INTO billing_records (bill_id, patient_id, total_amount, is_paid, generated_at, paid_at) VALUES
+(1001, 5001, 1040.00, FALSE, DATE_SUB(NOW(), INTERVAL 4 HOUR), NULL),
+(1002, 5002, 1480.00, FALSE, DATE_SUB(NOW(), INTERVAL 24 HOUR), NULL),
+(1003, 5003, 1280.00, TRUE,  DATE_SUB(NOW(), INTERVAL 8 HOUR), DATE_SUB(NOW(), INTERVAL 1 HOUR))
+ON DUPLICATE KEY UPDATE total_amount=VALUES(total_amount), is_paid=VALUES(is_paid);
+
+-- 13. BILLING LINE ITEMS (P3 - Jatin)
+INSERT INTO billing_line_items (item_id, bill_id, description, amount, created_at) VALUES
+(5001, 1001, 'Emergency ICU Bed Stay [Emergency ICU Ward A — Standard Base Bed + Ventilator] for 4 hour(s) @ $200.00/hr', 800.00, DATE_SUB(NOW(), INTERVAL 4 HOUR)),
+(5002, 1001, 'Cardiac Monitor Hookup (4 hrs @ $60.00/hr)', 240.00, DATE_SUB(NOW(), INTERVAL 3 HOUR)),
+(5003, 1002, 'General Medicine Bed Stay [General Medicine Ward B — Standard Base Bed] for 24 hour(s) @ $45.00/hr', 1080.00, DATE_SUB(NOW(), INTERVAL 24 HOUR)),
+(5004, 1002, 'Dialysis Therapy Session (2 hrs @ $200.00/hr)', 400.00, DATE_SUB(NOW(), INTERVAL 12 HOUR)),
+(5005, 1003, 'Cardiology ICU Bed Stay [Cardiology Intensive Care — Standard Base Bed + Oxygen Cylinder] for 8 hour(s) @ $160.00/hr', 1280.00, DATE_SUB(NOW(), INTERVAL 8 HOUR))
+ON DUPLICATE KEY UPDATE description=VALUES(description), amount=VALUES(amount);
+
+-- 14. KITCHEN MEAL ORDERS (P3 - Jatin)
+INSERT INTO kitchen_meal_orders (order_id, patient_id, diet_type, status, ordered_at) VALUES
+(2001, 5001, 'IV_FLUIDS', 'PENDING',   DATE_SUB(NOW(), INTERVAL 3 HOUR)),
+(2002, 5002, 'LIQUID',     'PREPARING', DATE_SUB(NOW(), INTERVAL 2 HOUR)),
+(2003, 5003, 'REGULAR',    'DELIVERED', DATE_SUB(NOW(), INTERVAL 5 HOUR)),
+(2004, 5005, 'IV_FLUIDS', 'PENDING',   DATE_SUB(NOW(), INTERVAL 1 HOUR))
+ON DUPLICATE KEY UPDATE diet_type=VALUES(diet_type), status=VALUES(status);

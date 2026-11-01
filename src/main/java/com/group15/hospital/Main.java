@@ -1,12 +1,5 @@
 package com.group15.hospital;
 
-import com.group15.hospital.config.DatabaseConnection;
-import com.group15.hospital.exception.EquipmentLimitExceededException;
-import com.group15.hospital.model.bed.*;
-import com.group15.hospital.model.enums.*;
-import com.group15.hospital.ui.LoginFrame;
-
-import javax.swing.*;
 import java.awt.GraphicsEnvironment;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -14,6 +7,23 @@ import java.util.Collections;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+
+import javax.swing.SwingUtilities;
+import javax.swing.UIManager;
+
+import com.group15.hospital.config.DatabaseConnection;
+import com.group15.hospital.exception.EquipmentLimitExceededException;
+import com.group15.hospital.model.bed.BaseBed;
+import com.group15.hospital.model.bed.BedComponent;
+import com.group15.hospital.model.bed.CardiacMonitorDecorator;
+import com.group15.hospital.model.bed.DialysisDecorator;
+import com.group15.hospital.model.bed.MedicalMachine;
+import com.group15.hospital.model.bed.OxygenCylinderDecorator;
+import com.group15.hospital.model.bed.VentilatorDecorator;
+import com.group15.hospital.model.bed.WaitlistEntry;
+import com.group15.hospital.model.enums.EquipmentType;
+import com.group15.hospital.model.enums.TriageLevel;
+import com.group15.hospital.ui.LoginFrame;
 
 /**
  * Main application bootstrap [Shared].
@@ -45,7 +55,7 @@ public class Main {
 
             // 1. Set System Look and Feel for native UI appearance
             try {
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+                UIManager.setLookAndFeel(UIManager.getCrossPlatformLookAndFeelClassName());
             } catch (Exception e) {
                 LOGGER.log(Level.FINE, "Using default Swing Look and Feel.");
             }
