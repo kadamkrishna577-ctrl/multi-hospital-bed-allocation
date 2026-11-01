@@ -325,8 +325,8 @@ public class SanitizationStaffPanel extends JPanel {
                 bedId,
                 BedState.fromStatus(BedStatus.REQUIRES_SANITIZATION),
                 hospitalName,
-                wardName
-        );
+                wardName);
+        refreshTable();
     }
 
     public void refreshTable() {
@@ -394,4 +394,13 @@ public class SanitizationStaffPanel extends JPanel {
         refreshTable();
         return true;
     }
+    public JComboBox<String> getHospitalFilterCombo() {
+        return hospitalFilterCombo;
+    }
+
+    public void triggerMarkSelectedClean() {
+        handleMarkSelectedClean();
+    }
 }
+
+

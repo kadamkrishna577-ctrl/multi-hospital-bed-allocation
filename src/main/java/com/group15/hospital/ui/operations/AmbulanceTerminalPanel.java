@@ -307,6 +307,7 @@ public class AmbulanceTerminalPanel extends JPanel {
 
         String ambulanceId = selectedAmbStr.split(" ")[0].trim();
         String patientName = patientNameField.getText().trim();
+        if (patientName.isBlank()) { patientName = "Emergency Patient (Unidentified)"; }
         TriageLevel triage = (TriageLevel) triageCombo.getSelectedItem();
         String hospital = (String) hospitalCombo.getSelectedItem();
 
@@ -372,6 +373,10 @@ public class AmbulanceTerminalPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "This patient has already arrived and been admitted to bed.", "Already Admitted", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Cannot admit patient.", "Reservation Expired", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
 
         try {
             ambulanceDAO.confirmArrivalAtomic(resId);
@@ -396,6 +401,10 @@ public class AmbulanceTerminalPanel extends JPanel {
             JOptionPane.showMessageDialog(this, "Patient has already arrived. ETA extension not applicable.", "Notice", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Hold window cannot be extended.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
 
         boolean extended = ambulanceDAO.extendReservationWindow(resId, 5);
         if (extended) {
@@ -417,6 +426,10 @@ public class AmbulanceTerminalPanel extends JPanel {
         String currentStatus = String.valueOf(tableModel.getValueAt(row, 9));
         if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(currentStatus)) {
             JOptionPane.showMessageDialog(this, "This patient has already arrived and been admitted to their bed (cannot reroute).", "Patient Admitted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Cannot reroute an inactive reservation.", "Reservation Expired", JOptionPane.WARNING_MESSAGE);
             return;
         }
         try {
@@ -533,4 +546,19 @@ public class AmbulanceTerminalPanel extends JPanel {
     public JTable getReservationsTable() {
         return reservationsTable;
     }
+    public void triggerReservationSubmission() { handleReservationSubmission(); }
+    public void triggerConfirmArrival() { handleConfirmArrival(); }
+    public void triggerExtendWindow() { handleExtendWindow(); }
+    public void triggerSimulateReroute() { handleSimulateReroute(); }
+
+    public JComboBox<String> getAmbulanceCombo() { return ambulanceCombo; }
+    public JTextField getPatientNameField() { return patientNameField; }
+    public JComboBox<TriageLevel> getTriageCombo() { return triageCombo; }
+    public JCheckBox getVentBox() { return ventBox; }
+    public JCheckBox getOxyBox() { return oxyBox; }
+    public JCheckBox getDialBox() { return dialBox; }
+    public JCheckBox getMonBox() { return monBox; }
+    public JComboBox<String> getHospitalCombo() { return hospitalCombo; }
+    public JSpinner getEtaSpinner() { return etaSpinner; }
 }
+

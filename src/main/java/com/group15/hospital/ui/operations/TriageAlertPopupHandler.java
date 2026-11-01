@@ -380,4 +380,12 @@ public class TriageAlertPopupHandler implements AlertObserver {
     public DefaultTableModel getFeedTableModel() {
         return feedTableModel;
     }
+    public JTable getFeedTable() {
+        return feedTable;
+    }
+
+    public void handleAcknowledgeSelected() {
+        acknowledgeSelectedRow();
+    }
 }
+

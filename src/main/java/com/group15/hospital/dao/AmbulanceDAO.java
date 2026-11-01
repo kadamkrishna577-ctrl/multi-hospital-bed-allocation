@@ -429,6 +429,12 @@ public class AmbulanceDAO {
     public void confirmArrivalAtomic(long reservationId) {
         AmbulanceReservation res = findReservationById(reservationId)
                 .orElseThrow(() -> new IllegalArgumentException("Reservation #" + reservationId + " not found"));
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(res.getStatus())) {
+            throw new IllegalStateException("Reservation #" + reservationId + " has already arrived.");
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(res.getStatus())) {
+            throw new IllegalStateException("Reservation #" + reservationId + " has already expired.");
+        }
 
         long bedId = res.getAssignedBedId();
         ReentrantLock lock = bedLocks.computeIfAbsent(bedId, k -> new ReentrantLock());
@@ -529,6 +535,7 @@ public class AmbulanceDAO {
                     simulatedBedStore.put(bedId, BedStatus.VACANT);
                     res.setStatus(AmbulanceReservation.STATUS_EXPIRED);
                     reservationStore.put(res.getReservationId(), res);
+                    updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());
                     expired.add(res);
                     LOGGER.info("Expired reservation #" + res.getReservationId() + ", released bed #" + bedId);
                 } finally {
@@ -681,3 +688,5 @@ public class AmbulanceDAO {
         return set;
     }
 }
+
+

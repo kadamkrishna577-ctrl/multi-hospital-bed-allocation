@@ -145,7 +145,7 @@ public class AmbulanceDispatchService {
         String wardName = resolveWardForTriage(triageLevel);
         AmbulanceReservation reservation = new AmbulanceReservation(
                 ambulanceId, ambulance.getAmbulanceType(),
-                patientName != null ? patientName : "Unknown Patient",
+                (patientName != null && !patientName.isBlank()) ? patientName.trim() : "Emergency Patient (Unidentified)",
                 triageLevel, needs, preferredHospital, wardName, bestBedId
         );
         AmbulanceReservation saved = ambulanceDAO.createReservationAtomic(reservation);

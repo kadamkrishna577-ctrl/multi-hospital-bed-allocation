@@ -487,4 +487,159 @@ public class AmbulanceAndStateTest {
         assertFalse(unackedAfter.stream().anyMatch(a -> savedAlert.getAlertId() == a.getAlertId()),
                 "Acknowledged alert must not appear in unacknowledged queue");
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 8: Network-Wide Catastrophic Capacity Saturation (SRS F9 & U5 Exception 1)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 8: Network-Wide Capacity Saturation Broadcasts NO_CAPACITY Alert and Throws BedAlreadyBookedException")
+    public void testNetworkWideCatastrophicCapacitySaturation() throws Exception {
+        final String currentHospital = "Metro General Hospital";
+        final long bedId = 399L;
+        dispatchService.seedSimulatedBed(currentHospital, bedId, BedStatus.VACANT);
+
+        AmbulanceReservation res = dispatchService.requestBedReservation(
+                "AMB-ALS-101", TriageLevel.LEVEL_1, Set.of(EquipmentType.VENTILATOR),
+                currentHospital, "SaturationPatient"
+        );
+
+        // Fill all beds across partner hospitals
+        for (String partner : List.of("City Central Hospital", "Memorial Care Hospital", "St. Jude Emergency Center")) {
+            for (int b = 1; b <= 600; b++) {
+                dispatchService.seedSimulatedBed(partner, (long) b, BedStatus.OCCUPIED);
+            }
+        }
+
+        CountDownLatch noCapLatch = new CountDownLatch(1);
+        notificationManager.registerObserver(alert -> {
+            if (SystemAlert.TYPE_NO_CAPACITY.equals(alert.getAlertType())) {
+                noCapLatch.countDown();
+            }
+        });
+
+        assertThrows(BedAlreadyBookedException.class, () ->
+                dispatchService.checkAndRerouteIfFull(res.getReservationId(), true));
+
+        boolean alertReceived = noCapLatch.await(500, TimeUnit.MILLISECONDS);
+        assertTrue(alertReceived, "TYPE_NO_CAPACITY alert must be broadcast to triage consoles");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 9: In-Flight Rejection on Dispatched/Unavailable Ambulance
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 9: In-Flight Rejection on Dispatched/Unavailable Ambulance")
+    public void testInFlightRejectionOnDispatchedAmbulance() {
+        ambulanceDAO.updateAmbulanceAvailability("AMB-ALS-101", false, "City Central Hospital");
+        try {
+            assertThrows(IllegalStateException.class, () ->
+                    dispatchService.requestBedReservation(
+                            "AMB-ALS-101", TriageLevel.LEVEL_1, Set.of(), "City Central Hospital", "DoubleDispatchPatient"
+                    ));
+        } finally {
+            ambulanceDAO.updateAmbulanceAvailability("AMB-ALS-101", true, "City Central Hospital");
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 10: Non-Existent Ambulance ID Rejection
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 10: Non-Existent Ambulance ID Throws IllegalStateException")
+    public void testNonExistentAmbulanceIdValidation() {
+        assertThrows(IllegalStateException.class, () ->
+                dispatchService.requestBedReservation(
+                        "AMB-NONEXISTENT-999", TriageLevel.LEVEL_1, Set.of(), "City Central Hospital", "GhostPatient"
+                ));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 11: Terminal Invariant Guards - Defense Against Re-Admission and Reroute
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 11: Invariant Guards - Admitted Reservation Cannot Be Re-admitted or Rerouted")
+    public void testTerminalInvariantGuardsAdmittedReservationDefense() {
+        dispatchService.seedSimulatedBed("City Central Hospital", 114L, BedStatus.VACANT);
+        AmbulanceReservation res = dispatchService.requestBedReservation(
+                "AMB-ALS-101", TriageLevel.LEVEL_2, Set.of(), "City Central Hospital", "InvariantPatient"
+        );
+        ambulanceDAO.confirmArrivalAtomic(res.getReservationId());
+
+        assertThrows(IllegalStateException.class, () ->
+                ambulanceDAO.confirmArrivalAtomic(res.getReservationId()),
+                "Re-confirming arrival must throw IllegalStateException");
+
+        assertThrows(IllegalStateException.class, () ->
+                dispatchService.checkAndRerouteIfFull(res.getReservationId(), true),
+                "Rerouting already admitted reservation must throw IllegalStateException");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 12: Background Hold Expiry Daemon Sweep & Ambulance Availability Release
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 12: Hold Expiry Daemon Sweep Releases Bed to VACANT and Frees Ambulance Unit")
+    public void testBackgroundHoldExpirySweepAndAmbulanceRelease() {
+        dispatchService.seedSimulatedBed("City Central Hospital", 115L, BedStatus.VACANT);
+        AmbulanceReservation res = dispatchService.requestBedReservation(
+                "AMB-BLS-201", TriageLevel.LEVEL_3, Set.of(), "City Central Hospital", "ExpiryPatient"
+        );
+
+        LocalDateTime future = LocalDateTime.now().plusMinutes(30);
+        dispatchService.runExpirySweepAt(future);
+
+        AmbulanceReservation expiredRes = ambulanceDAO.findReservationById(res.getReservationId()).orElseThrow();
+        assertEquals(AmbulanceReservation.STATUS_EXPIRED, expiredRes.getStatus());
+        assertEquals(BedStatus.VACANT, ambulanceDAO.getSimulatedBedStatus(115L));
+
+        Ambulance amb = ambulanceDAO.findAmbulanceById("AMB-BLS-201").orElseThrow();
+        assertTrue(amb.isAvailable(), "Ambulance must be restored to available upon reservation expiry");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 13: Isolation Containment Safety Buffer Lock (SRS F12 & Module P3 Integration)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 13: Isolation Containment Safety Buffer Lock Blocks Pre-Arrival Holds and Patient Placement")
+    public void testIsolationContainmentSyncAndBufferLock() {
+        RestrictedBufferState buffer = new RestrictedBufferState();
+        assertFalse(buffer.canReserveEnRoute());
+        assertFalse(buffer.canAcceptPatient());
+        assertThrows(IllegalBedStateException.class, buffer::reserveEnRoute);
+        assertThrows(IllegalBedStateException.class, buffer::assignPatient);
+
+        BedState released = buffer.releaseBuffer();
+        assertInstanceOf(VacantState.class, released, "releaseBuffer must return VacantState");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 14: System-Wide Broadcast with Null Target Role (SRS F10 Alert Engine)
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 14: System-Wide Broadcast with Null Target Role Dispatches Without NPE")
+    public void testSystemWideBroadcastWithNullTargetRole() {
+        SystemAlert sysAlert = new SystemAlert(
+                SystemAlert.TYPE_BED_CLEANED, null, "City Central Hospital", 999L,
+                "System-wide broadcast with null target role"
+        );
+        alertDAO.saveAlert(sysAlert);
+
+        List<SystemAlert> alerts = alertDAO.fetchUnacknowledgedAlerts("City Central Hospital", null);
+        assertTrue(alerts.stream().anyMatch(a -> Long.valueOf(999L).equals(a.getBedId())),
+                "System-wide alert must be retrievable when targetRole is null");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Test Case 15: Paramedic Unidentified Emergency Patient Fallback
+    // ─────────────────────────────────────────────────────────────────────────
+    @Test
+    @DisplayName("Test 15: Paramedic Fallback Tag for Unidentified Critical Emergency Patients")
+    public void testParamedicEmergencyPatientFallback() {
+        dispatchService.seedSimulatedBed("City Central Hospital", 120L, BedStatus.VACANT);
+        AmbulanceReservation res = dispatchService.requestBedReservation(
+                "AMB-ALS-101", TriageLevel.LEVEL_1, Set.of(), "City Central Hospital", "   "
+        );
+        assertEquals("Emergency Patient (Unidentified)", res.getPatientName(),
+                "Blank patient name must fall back to 'Emergency Patient (Unidentified)'");
+    }
 }
