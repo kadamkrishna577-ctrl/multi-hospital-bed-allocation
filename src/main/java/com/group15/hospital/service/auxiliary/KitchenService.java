@@ -10,6 +10,7 @@ import com.group15.hospital.model.hierarchy.Patient;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.logging.Logger;
 
 /**
@@ -205,6 +206,16 @@ public class KitchenService implements PatientTransferListener {
      * @return {@code true} if updated
      */
     public boolean updateOrderStatus(long orderId, String newStatus, String actor) {
+        Optional<KitchenMealOrder> existingOpt = kitchenOrderDAO.findOrderById(orderId);
+        if (existingOpt.isPresent()) {
+            String current = existingOpt.get().getStatus();
+            if (KitchenMealOrder.STATUS_DELIVERED.equalsIgnoreCase(current) ||
+                KitchenMealOrder.STATUS_CANCELLED.equalsIgnoreCase(current)) {
+                LOGGER.warning(String.format("[KitchenService] Cannot update order #%d: order is in terminal status %s",
+                        orderId, current));
+                return false;
+            }
+        }
         boolean success = kitchenOrderDAO.updateOrderStatus(orderId, newStatus);
         if (success) {
             auditDAO.log(

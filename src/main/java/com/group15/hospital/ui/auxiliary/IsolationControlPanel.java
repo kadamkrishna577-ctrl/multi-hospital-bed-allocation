@@ -105,7 +105,7 @@ public class IsolationControlPanel extends JPanel {
         banner.setBackground(new Color(15, 118, 110)); // Deep Teal
         banner.setBorder(new EmptyBorder(12, 15, 12, 15));
 
-        JLabel title = new JLabel("🛡️ INFECTION CONTAINMENT & WARD TOPOLOGY CONTROL");
+        JLabel title = new JLabel("[ISO] INFECTION CONTAINMENT & WARD TOPOLOGY CONTROL");
         title.setFont(new Font("Segoe UI", Font.BOLD, 16));
         title.setForeground(Color.WHITE);
 
@@ -208,6 +208,10 @@ public class IsolationControlPanel extends JPanel {
                         setForeground(new Color(220, 38, 38)); // Crimson Red
                     } else if (val.contains("EXPOSED")) {
                         setForeground(new Color(234, 88, 12)); // Orange-Red Hazard
+                    } else if (val.contains("PENDING CLEAN")) {
+                        setForeground(new Color(185, 28, 28)); // Red Alert
+                    } else if (val.contains("BUFFER")) {
+                        setForeground(new Color(217, 119, 6)); // Amber
                     } else {
                         setForeground(Color.GRAY);
                         setFont(getFont().deriveFont(Font.PLAIN));
@@ -238,9 +242,9 @@ public class IsolationControlPanel extends JPanel {
         JTabbedPane tabbed = new JTabbedPane();
         tabbed.setFont(new Font("Segoe UI", Font.BOLD, 12));
 
-        tabbed.addTab("🚨 Contagious Containment Controls", createContainmentControlsPanel());
-        tabbed.addTab("🔄 Ward Transfer Simulator (Fires Observers)", createTransferSimulatorPanel());
-        tabbed.addTab("🔗 Add Ward Adjacency Link", createTopologyLinkPanel());
+        tabbed.addTab("[ISO] Contagious Containment Controls", createContainmentControlsPanel());
+        tabbed.addTab("[TRANSFER] Ward Transfer Simulator (Fires Observers)", createTransferSimulatorPanel());
+        tabbed.addTab("[LINK] Add Ward Adjacency Link", createTopologyLinkPanel());
 
         return tabbed;
     }
@@ -279,7 +283,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(isolationBedCombo, gbc);
 
         // Activate Isolation Button
-        JButton activateBtn = new JButton("🚨 Activate Contagious Isolation (Lock Buffers)");
+        JButton activateBtn = new JButton("[!] Activate Contagious Isolation (Lock Buffers)");
         activateBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         activateBtn.setBackground(new Color(220, 38, 38)); // Crimson Red
         activateBtn.setForeground(Color.WHITE);
@@ -290,7 +294,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(activateBtn, gbc);
 
         // Release Isolation Button
-        JButton releaseBtn = new JButton("✓ Release Isolation (Restore Buffers to VACANT)");
+        JButton releaseBtn = new JButton("[OK] Release Isolation (Restore Buffers to VACANT)");
         releaseBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         releaseBtn.setBackground(new Color(22, 101, 52)); // Forest Green
         releaseBtn.setForeground(Color.WHITE);
@@ -373,7 +377,7 @@ public class IsolationControlPanel extends JPanel {
         transferHoursSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 168, 1));
         optionsPanel.add(transferHoursSpinner);
 
-        contagiousCheckBox = new JCheckBox("⚠️ Patient is Contagious / Requires Isolation");
+        contagiousCheckBox = new JCheckBox("[!] Patient is Contagious / Requires Isolation");
         contagiousCheckBox.setForeground(new Color(185, 28, 28));
         contagiousCheckBox.setFont(new Font("Segoe UI", Font.BOLD, 12));
         optionsPanel.add(contagiousCheckBox);
@@ -382,7 +386,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(optionsPanel, gbc);
 
         // Row 5: Action Button
-        JButton transferBtn = new JButton("🔄 Execute Ward Transfer & Notify Observers");
+        JButton transferBtn = new JButton("[TRANSFER] Execute Ward Transfer & Notify Observers");
         transferBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
         transferBtn.setBackground(new Color(37, 99, 235)); // Primary Blue
         transferBtn.setForeground(Color.WHITE);
@@ -427,7 +431,7 @@ public class IsolationControlPanel extends JPanel {
         gbc.gridx = 1; gbc.gridy = 2;
         panel.add(linkTypeCombo, gbc);
 
-        JButton addLinkBtn = new JButton("🔗 Add Adjacency Link");
+        JButton addLinkBtn = new JButton("[+] Add Adjacency Link");
         addLinkBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         addLinkBtn.setFocusPainted(false);
         addLinkBtn.addActionListener(e -> handleAddTopologyLink());
@@ -462,31 +466,36 @@ public class IsolationControlPanel extends JPanel {
             transferToBedCombo.setSelectedItem(selectedBed);
         }
 
-        Set<Long> lockedBuffers = containmentService.activateIsolation(selectedBed, "CLINICAL_STAFF");
-        Set<Long> exposedOccupied = containmentService.getExposedOccupiedBeds(selectedBed);
+        try {
+            Set<Long> lockedBuffers = containmentService.activateIsolation(selectedBed, "CLINICAL_STAFF");
+            Set<Long> exposedOccupied = containmentService.getExposedOccupiedBeds(selectedBed);
 
-        refreshTopology();
+            refreshTopology();
 
-        // 3. Occupied Neighbor Exposure Warning
-        if (!exposedOccupied.isEmpty()) {
-            String warnMsg = String.format(
-                    "<html><b style='color:#dc2626; font-size:13px;'>⚠️ CROSS-CONTAMINATION HAZARD DETECTED!</b><br><br>" +
-                    "Contagious isolation on Bed #%d exposes adjacent occupied bed(s):<br>" +
-                    "<b style='color:#b91c1c; font-size:12px;'>• Occupied Bed(s) at Risk: %s</b><br><br>" +
-                    "Status in grid marked as: <b style='color:#ea580c;'>🚨 EXPOSED (EVACUATE)</b><br>" +
-                    "Cross-contamination risk alert: Immediate patient transfer / ward evacuation required!</html>",
-                    selectedBed, exposedOccupied);
+            // 3. Occupied Neighbor Exposure Warning
+            if (!exposedOccupied.isEmpty()) {
+                String warnMsg = String.format(
+                        "<html><b style='color:#dc2626; font-size:13px;'>[!] CROSS-CONTAMINATION HAZARD DETECTED!</b><br><br>" +
+                        "Contagious isolation on Bed #%d exposes adjacent occupied bed(s):<br>" +
+                        "<b style='color:#b91c1c; font-size:12px;'>• Occupied Bed(s) at Risk: %s</b><br><br>" +
+                        "Status in grid marked as: <b style='color:#ea580c;'>[!] EXPOSED (EVACUATE)</b><br>" +
+                        "Cross-contamination risk alert: Immediate patient transfer / ward evacuation required!</html>",
+                        selectedBed, exposedOccupied);
 
-            JOptionPane.showMessageDialog(this, warnMsg, "Cross-Contamination Warning", JOptionPane.WARNING_MESSAGE);
+                JOptionPane.showMessageDialog(this, warnMsg, "Cross-Contamination Warning", JOptionPane.WARNING_MESSAGE);
+            }
+
+            String msg = String.format("Contagious isolation ACTIVATED on Bed #%d.\n" +
+                            "Safety Buffers Locked (%d beds): %s\n" +
+                            "Exposed Occupied Bed(s) Requiring Transfer (%d beds): %s\n\n" +
+                            "Vacant buffer beds are held in RESTRICTED_BUFFER and cannot receive patients.",
+                    selectedBed, lockedBuffers.size(), lockedBuffers.isEmpty() ? "None (no vacant adjacent beds)" : lockedBuffers,
+                    exposedOccupied.size(), exposedOccupied.isEmpty() ? "None" : exposedOccupied);
+            JOptionPane.showMessageDialog(this, msg, "Isolation Active", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalBedStateException ex) {
+            JOptionPane.showMessageDialog(this, "Isolation Activation Blocked:\n" + ex.getMessage(),
+                    "Invalid Isolation Target", JOptionPane.ERROR_MESSAGE);
         }
-
-        String msg = String.format("Contagious isolation ACTIVATED on Bed #%d.\n" +
-                        "Safety Buffers Locked (%d beds): %s\n" +
-                        "Exposed Occupied Bed(s) Requiring Transfer (%d beds): %s\n\n" +
-                        "Vacant buffer beds are held in RESTRICTED_BUFFER and cannot receive patients.",
-                selectedBed, lockedBuffers.size(), lockedBuffers.isEmpty() ? "None (no vacant adjacent beds)" : lockedBuffers,
-                exposedOccupied.size(), exposedOccupied.isEmpty() ? "None" : exposedOccupied);
-        JOptionPane.showMessageDialog(this, msg, "Isolation Active", JOptionPane.INFORMATION_MESSAGE);
     }
 
     private void handleReleaseIsolation() {
@@ -540,12 +549,17 @@ public class IsolationControlPanel extends JPanel {
                 ? WardTopologyGraph.RELATION_SHARED_AIR
                 : WardTopologyGraph.RELATION_NEIGHBOR;
 
-        wardTopologyDAO.insertEdge(bed1, bed2, type);
-        refreshTopology();
+        try {
+            wardTopologyDAO.insertEdge(bed1, bed2, type);
+            containmentService.onTopologyEdgeAdded(bed1, bed2, type);
+            refreshTopology();
 
-        JOptionPane.showMessageDialog(this,
-                String.format("Added bidirectional %s edge between Bed #%d and Bed #%d.", type, bed1, bed2),
-                "Link Created", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this,
+                    String.format("Added bidirectional %s edge between Bed #%d and Bed #%d.", type, bed1, bed2),
+                    "Link Created", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid Link", JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     private void handleExecuteTransfer() {
@@ -679,17 +693,7 @@ public class IsolationControlPanel extends JPanel {
 
             Set<Long> neighbors = graph.getDirectNeighbors(bedId);
             Set<Long> sharedAir = graph.getSharedAirBeds(bedId);
-            boolean isolated = containmentService.isBedIsolated(bedId);
-            boolean exposed = containmentService.isBedExposed(bedId);
-
-            String contagiousStatus;
-            if (isolated) {
-                contagiousStatus = "⚠️ CONTAGIOUS ISOLATION";
-            } else if (exposed) {
-                contagiousStatus = "🚨 EXPOSED (EVACUATE)";
-            } else {
-                contagiousStatus = "Normal";
-            }
+            String contagiousStatus = containmentService.getContagiousSourceStatus(bedId);
 
             topologyTableModel.addRow(new Object[]{
                     bedId,
@@ -763,7 +767,12 @@ public class IsolationControlPanel extends JPanel {
     }
 
     public void initDemoDataIfEmpty() {
-        // Ensure in-memory demo beds are registered in containmentService
+        // Ensure all beds from BedDAO are registered in containmentService
+        for (BaseBed b : bedDAO.findAllBeds()) {
+            containmentService.registerBed(b);
+        }
+
+        // Ensure in-memory demo beds are registered in containmentService if still empty
         if (containmentService.getRegisteredBeds().isEmpty()) {
             BaseBed b101 = new BaseBed(101L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
             BaseBed b102 = new BaseBed(102L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);

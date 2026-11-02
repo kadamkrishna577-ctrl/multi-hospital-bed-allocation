@@ -93,7 +93,7 @@ public class BillingAndKitchenPanel extends JPanel {
         banner.setBackground(new Color(30, 58, 138)); // Deep Indigo / Royal Navy
         banner.setBorder(new EmptyBorder(10, 15, 10, 15));
 
-        JLabel title = new JLabel("💳 AUXILIARY SERVICES: LIVE BILLING & KITCHEN DIETARY DISPATCH");
+        JLabel title = new JLabel("[BILL/KITCHEN] AUXILIARY SERVICES: LIVE BILLING & KITCHEN DIETARY DISPATCH");
         title.setFont(new Font("Segoe UI", Font.BOLD, 15));
         title.setForeground(Color.WHITE);
 
@@ -221,21 +221,21 @@ public class BillingAndKitchenPanel extends JPanel {
         bar.setBackground(new Color(241, 245, 249));
         bar.setBorder(new LineBorder(new Color(226, 232, 240)));
 
-        JButton addChargeBtn = new JButton("➕ Add Manual Charge");
+        JButton addChargeBtn = new JButton("[+] Add Manual Charge");
         addChargeBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
         addChargeBtn.setBackground(new Color(37, 99, 235));
         addChargeBtn.setForeground(Color.WHITE);
         addChargeBtn.setFocusPainted(false);
         addChargeBtn.addActionListener(e -> showAddChargeDialog());
 
-        JButton settleBillBtn = new JButton("💳 Settle / Mark Paid");
+        JButton settleBillBtn = new JButton("[OK] Settle / Mark Paid");
         settleBillBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
         settleBillBtn.setBackground(new Color(22, 163, 74));
         settleBillBtn.setForeground(Color.WHITE);
         settleBillBtn.setFocusPainted(false);
         settleBillBtn.addActionListener(e -> handleSettleBill());
 
-        JButton refreshBillsBtn = new JButton("🔄 Refresh Bills");
+        JButton refreshBillsBtn = new JButton("[R] Refresh Bills");
         refreshBillsBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         refreshBillsBtn.setFocusPainted(false);
         refreshBillsBtn.addActionListener(e -> refreshBills());
@@ -355,29 +355,29 @@ public class BillingAndKitchenPanel extends JPanel {
         bar.setBackground(new Color(241, 245, 249));
         bar.setBorder(new LineBorder(new Color(226, 232, 240)));
 
-        JButton newOrderBtn = new JButton("🍽️ New Order");
+        JButton newOrderBtn = new JButton("[+] New Order");
         newOrderBtn.setFont(new Font("Segoe UI", Font.BOLD, 11));
         newOrderBtn.setBackground(new Color(217, 119, 6));
         newOrderBtn.setForeground(Color.WHITE);
         newOrderBtn.setFocusPainted(false);
         newOrderBtn.addActionListener(e -> showNewOrderDialog());
 
-        JButton prepBtn = new JButton("🍳 Start Preparing");
+        JButton prepBtn = new JButton("[PREP] Start Preparing");
         prepBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         prepBtn.setFocusPainted(false);
         prepBtn.addActionListener(e -> updateSelectedOrderStatus(KitchenMealOrder.STATUS_PREPARING));
 
-        JButton deliverBtn = new JButton("🚚 Deliver");
+        JButton deliverBtn = new JButton("[OK] Deliver");
         deliverBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         deliverBtn.setFocusPainted(false);
         deliverBtn.addActionListener(e -> updateSelectedOrderStatus(KitchenMealOrder.STATUS_DELIVERED));
 
-        JButton cancelBtn = new JButton("❌ Cancel");
+        JButton cancelBtn = new JButton("[X] Cancel");
         cancelBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         cancelBtn.setFocusPainted(false);
         cancelBtn.addActionListener(e -> updateSelectedOrderStatus(KitchenMealOrder.STATUS_CANCELLED));
 
-        JButton refreshKitchenBtn = new JButton("🔄 Refresh");
+        JButton refreshKitchenBtn = new JButton("[R] Refresh");
         refreshKitchenBtn.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         refreshKitchenBtn.setFocusPainted(false);
         refreshKitchenBtn.addActionListener(e -> refreshKitchenOrders());

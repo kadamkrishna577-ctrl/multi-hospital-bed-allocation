@@ -94,6 +94,9 @@ public class IsolationContainmentService {
     public void registerBed(BedComponent bed) {
         if (bed != null) {
             registeredBeds.put(bed.getBedId(), bed);
+            if (bed instanceof BaseBed baseBed) {
+                BedDAO.getInMemoryBedStore().put(bed.getBedId(), baseBed);
+            }
         }
     }
 
@@ -114,6 +117,7 @@ public class IsolationContainmentService {
         // Fallback in-memory registration for offline execution
         BaseBed defaultBed = new BaseBed(bedId, resolveWardForBed(bedId), "City Central Hospital", BedStatus.VACANT);
         registeredBeds.put(bedId, defaultBed);
+        bedDAO.updateBedStatus(bedId, BedStatus.VACANT);
         return defaultBed;
     }
 
@@ -135,6 +139,55 @@ public class IsolationContainmentService {
     }
 
     /**
+     * Checks if a bed is exposed to any active contagious isolation zone
+     * via neighbor adjacency or shared airflow, regardless of its occupancy status.
+     *
+     * @param bedId bed identifier to test
+     * @return true if any neighbor or shared-air bed is currently actively isolated
+     */
+    public boolean isBedExposedToActiveIsolation(long bedId) {
+        if (activeIsolatedBeds.isEmpty() || activeIsolatedBeds.contains(bedId)) {
+            return false;
+        }
+        WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
+        for (Long isoBedId : activeIsolatedBeds) {
+            if (graph.getAllAffectedBufferBeds(isoBedId).contains(bedId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Formats a clean ASCII string representing the contagious exposure state of a bed.
+     *
+     * @param bedId bed identifier
+     * @return clean ASCII status string (e.g. "[ISO] CONTAGIOUS ISOLATION", "[!] EXPOSED (EVACUATE)", etc.)
+     */
+    public String getContagiousSourceStatus(long bedId) {
+        if (activeIsolatedBeds.contains(bedId)) {
+            return "[ISO] CONTAGIOUS ISOLATION";
+        }
+        BedComponent bed = getBed(bedId);
+        boolean exposed = isBedExposedToActiveIsolation(bedId);
+        if (!exposed) {
+            return "Normal";
+        }
+        if (bed != null) {
+            if (bed.getBedStatus() == BedStatus.OCCUPIED) {
+                return "[!] EXPOSED (EVACUATE)";
+            }
+            if (bed.getBedStatus() == BedStatus.REQUIRES_SANITIZATION) {
+                return "[CLEAN] BUFFER PENDING CLEAN";
+            }
+            if (bed.getBedStatus() == BedStatus.RESTRICTED_BUFFER) {
+                return "[BUF] SAFETY BUFFER LOCKED";
+            }
+        }
+        return "Normal";
+    }
+
+    /**
      * Checks if a bed is occupied and exposed to an adjacent or shared-air contagious bed.
      *
      * @param bedId bed identifier
@@ -148,13 +201,7 @@ public class IsolationContainmentService {
         if (bed == null || bed.getBedStatus() != BedStatus.OCCUPIED) {
             return false;
         }
-        WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
-        for (Long isoBedId : activeIsolatedBeds) {
-            if (graph.getAllAffectedBufferBeds(isoBedId).contains(bedId)) {
-                return true;
-            }
-        }
-        return false;
+        return isBedExposedToActiveIsolation(bedId);
     }
 
     /**
@@ -191,12 +238,24 @@ public class IsolationContainmentService {
      * @param contagiousBedId ID of the bed housing the contagious patient
      * @param actor           user or system role activating isolation
      * @return set of newly locked buffer bed IDs
+     * @throws IllegalBedStateException if contagiousBedId is already a RESTRICTED_BUFFER or REQUIRES_SANITIZATION
      */
     public Set<Long> activateIsolation(long contagiousBedId, String actor) {
+        BedComponent sourceBed = getBed(contagiousBedId);
+        if (sourceBed != null) {
+            if (sourceBed.getBedStatus() == BedStatus.RESTRICTED_BUFFER) {
+                throw new IllegalBedStateException("Cannot activate contagious isolation on bed #" + contagiousBedId +
+                        ": bed is currently a RESTRICTED_BUFFER and cannot admit patients until cleared.");
+            }
+            if (sourceBed.getBedStatus() == BedStatus.REQUIRES_SANITIZATION) {
+                throw new IllegalBedStateException("Cannot activate contagious isolation on bed #" + contagiousBedId +
+                        ": bed is in REQUIRES_SANITIZATION state and must be terminally disinfected before reuse.");
+            }
+        }
+
         activeIsolatedBeds.add(contagiousBedId);
 
         // Ensure contagious source bed is marked OCCUPIED if it was VACANT
-        BedComponent sourceBed = getBed(contagiousBedId);
         if (sourceBed != null && sourceBed.getBedStatus() == BedStatus.VACANT) {
             sourceBed.setBedStatus(BedStatus.OCCUPIED);
             bedDAO.updateBedStatus(contagiousBedId, BedStatus.OCCUPIED);
@@ -233,6 +292,14 @@ public class IsolationContainmentService {
                             String.format("Occupied bed #%d shares room/ventilation boundaries with contagious bed #%d. Immediate patient transfer required!",
                                     neighborId, contagiousBedId)
                     );
+                } else if (bed.getBedStatus() == BedStatus.REQUIRES_SANITIZATION) {
+                    auditDAO.log(
+                            operator,
+                            "BUFFER_PENDING_CLEAN",
+                            String.valueOf(neighborId),
+                            String.format("Dirty bed #%d is adjacent to contagious bed #%d. Will auto-transition to RESTRICTED_BUFFER upon sanitization.",
+                                    neighborId, contagiousBedId)
+                    );
                 }
             }
         }
@@ -240,6 +307,40 @@ public class IsolationContainmentService {
         LOGGER.info(String.format("[IsolationContainmentService] Activated isolation on bed #%d, locked %d buffer bed(s): %s",
                 contagiousBedId, newlyLocked.size(), newlyLocked));
         return newlyLocked;
+    }
+
+    /**
+     * Evaluates live isolation propagation when a dynamic topology edge is added.
+     *
+     * @param bed1             first bed ID
+     * @param bed2             second bed ID
+     * @param relationshipType 'NEIGHBOR' or 'SHARED_AIR'
+     */
+    public void onTopologyEdgeAdded(long bed1, long bed2, String relationshipType) {
+        if (activeIsolatedBeds.contains(bed1)) {
+            evaluateNeighborUnderActiveIsolation(bed2, bed1);
+        }
+        if (activeIsolatedBeds.contains(bed2)) {
+            evaluateNeighborUnderActiveIsolation(bed1, bed2);
+        }
+    }
+
+    private void evaluateNeighborUnderActiveIsolation(long neighborId, long isolatedSourceId) {
+        BedComponent bed = getBed(neighborId);
+        if (bed != null) {
+            if (bed.getBedStatus() == BedStatus.VACANT) {
+                BedState newState = new VacantState().restrictBuffer();
+                bed.setBedStatus(newState.getStatus());
+                bedDAO.updateBedStatus(neighborId, BedStatus.RESTRICTED_BUFFER);
+                auditDAO.log("INFECTION_CONTROL", "DYNAMIC_BUFFER_LOCKED", String.valueOf(neighborId),
+                        String.format("Bed #%d locked to RESTRICTED_BUFFER after dynamic edge added to isolated bed #%d",
+                                neighborId, isolatedSourceId));
+            } else if (bed.getBedStatus() == BedStatus.OCCUPIED) {
+                auditDAO.log("INFECTION_CONTROL", "DYNAMIC_CROSS_CONTAMINATION_WARNING", String.valueOf(neighborId),
+                        String.format("Occupied bed #%d dynamically linked to isolated bed #%d! Evacuation required.",
+                                neighborId, isolatedSourceId));
+            }
+        }
     }
 
     /**
@@ -372,6 +473,21 @@ public class IsolationContainmentService {
         Objects.requireNonNull(patient, "patient must not be null");
         Objects.requireNonNull(fromBed, "fromBed must not be null");
         Objects.requireNonNull(toBed, "toBed must not be null");
+
+        if (fromBed.getBedId() == toBed.getBedId()) {
+            throw new IllegalArgumentException("Cannot transfer patient: source and target beds are identical (Bed #" + fromBed.getBedId() + ").");
+        }
+
+        BedStatus toStatus = toBed.getBedStatus();
+        if (toStatus == BedStatus.OCCUPIED) {
+            throw new IllegalBedStateException("Cannot transfer patient to bed #" + toBed.getBedId() + ": target bed is already OCCUPIED.");
+        }
+        if (toStatus == BedStatus.RESTRICTED_BUFFER) {
+            throw new IllegalBedStateException("Cannot transfer patient to bed #" + toBed.getBedId() + ": target bed is held in RESTRICTED_BUFFER for infection containment.");
+        }
+        if (toStatus == BedStatus.REQUIRES_SANITIZATION) {
+            throw new IllegalBedStateException("Cannot transfer patient to bed #" + toBed.getBedId() + ": target bed REQUIRES_SANITIZATION and must be disinfected first.");
+        }
 
         registerBed(fromBed);
         registerBed(toBed);
