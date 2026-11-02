@@ -258,7 +258,7 @@ All Phase 3 code resides in package `com.group15.hospital` with zero external li
 | **Swing Presentation**| [`BillingAndKitchenPanel.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/ui/auxiliary/BillingAndKitchenPanel.java) | **Tab 7 UI**. Split-pane interface providing live master/detail invoice inspection, manual charge creation, bill settlement, and kitchen dietary fulfillment status dispatch. |
 | **UI Integration**    | [`MainDashboardFrame.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/ui/MainDashboardFrame.java) | Integrates Phase 3 singletons, wires observers (`isolationService.registerListener(...)`), registers Tab 6 and Tab 7, and attaches dynamic `ChangeListener` for tab navigation refreshes. |
 | **Database Seed**     | [`02_seed_data.sql`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/sql/02_seed_data.sql) | Seed inserts satisfying foreign key constraints for `patients`, `ward_topology`, `billing_records`, `billing_line_items`, and `kitchen_meal_orders`. |
-| **Test Suite**        | [`IsolationAndBillingTest.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/test/java/com/group15/hospital/IsolationAndBillingTest.java) | Comprehensive JUnit 5 test suite verifying topology lookups, buffer locking, overlapping isolation zones, decorator billing calculations, ICU step-down dietary rules, UI panel instantiation, and edge cases (48 passing tests project-wide, 25 in this suite). |
+| **Test Suite**        | [`IsolationAndBillingTest.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/test/java/com/group15/hospital/IsolationAndBillingTest.java) | Comprehensive JUnit 5 test suite verifying topology lookups, buffer locking, overlapping isolation zones, decorator billing calculations, ICU step-down dietary rules, UI panel instantiation, and edge cases (56 passing tests project-wide, 25 in this suite). |
 | **Core Fixes**        | [`BaseBed.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/model/bed/BaseBed.java) | Thread-safe synchronized bed booking and discharge to prevent race conditions during concurrent allocations. |
 | **Core Fixes**        | [`EquipmentType.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/model/enums/EquipmentType.java) | Corrected display names for decorators to enable uppercase string matching in assertions. |
 | **Build Config**      | [`pom.xml`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/pom.xml) | Configured `exec-maven-plugin` to launch `com.group15.hospital.Main` from the command line. |
@@ -310,7 +310,7 @@ The Phase 3 development cycle was organized across a structured 3-week timeline:
   - Built [`BillingAndKitchenPanel.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/ui/auxiliary/BillingAndKitchenPanel.java) (Tab 7): split-pane master/detail billing ledger and dietary dispatch queue with fulfillment workflow actions (`PREPARING` -> `DELIVERED`).
   - Integrated both panels into [`MainDashboardFrame.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/main/java/com/group15/hospital/ui/MainDashboardFrame.java) using shared service singletons and registered tab `ChangeListener` for dynamic updates.
   - Appended Phase 3 seed data to [`02_seed_data.sql`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/sql/02_seed_data.sql) ensuring foreign-key validity across `patients`, `ward_topology`, `billing_records`, and `kitchen_meal_orders`.
-  - Authored comprehensive JUnit 5 tests in [`IsolationAndBillingTest.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/test/java/com/group15/hospital/IsolationAndBillingTest.java), achieving **48 passing tests (0 failures, 0 errors)** across all four modules (with 25 tests dedicated to Phase 3 edge-case containment, sanitization hooks, and billing ledger reliability).
+  - Authored comprehensive JUnit 5 tests in [`IsolationAndBillingTest.java`](file:///d:/rc_web/clean_rc_web/multi-hospital-bed-allocation/src/test/java/com/group15/hospital/IsolationAndBillingTest.java), achieving **56 passing tests (0 failures, 0 errors)** across all four modules (with 25 tests dedicated to Phase 3 edge-case containment, sanitization hooks, and billing ledger reliability).
 
 ---
 
@@ -326,7 +326,7 @@ The Phase 3 development cycle was organized across a structured 3-week timeline:
 mvn clean compile
 ```
 
-### 2. Run the Full Test Suite (48 Tests)
+### 2. Run the Full Test Suite (56 Tests)
 ```powershell
 mvn test
 ```
@@ -334,7 +334,7 @@ mvn test
 **Test Execution Summary:**
 ```text
 [INFO] Running com.group15.hospital.AmbulanceAndStateTest
-[INFO] Tests run: 9, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0
 [INFO] Running com.group15.hospital.ConcurrencyAndDecoratorTest
 [INFO] Tests run: 8, Failures: 0, Errors: 0, Skipped: 0
 [INFO] Running com.group15.hospital.IsolationAndBillingTest
@@ -343,7 +343,7 @@ mvn test
 [INFO] Tests run: 6, Failures: 0, Errors: 0, Skipped: 0
 [INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
-[INFO] Tests run: 48, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 56, Failures: 0, Errors: 0, Skipped: 0
 [INFO] ------------------------------------------------------------------------
 ```
 
