@@ -61,7 +61,7 @@ public class WardTopologyDAO {
      */
     public boolean insertEdge(long bedId1, long bedId2, String relationshipType) {
         if (bedId1 == bedId2) {
-            return false;
+            throw new IllegalArgumentException("Self-loops are not allowed: Bed #" + bedId1 + " cannot connect to itself.");
         }
 
         String type = (relationshipType != null && !relationshipType.trim().isEmpty())

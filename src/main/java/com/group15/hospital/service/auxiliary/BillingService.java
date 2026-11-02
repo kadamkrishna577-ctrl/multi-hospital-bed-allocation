@@ -133,6 +133,9 @@ public class BillingService implements PatientTransferListener {
      * @return the created line item
      */
     public BillingLineItem addManualCharge(long patientId, String description, double amount) {
+        if (amount <= 0.0) {
+            throw new IllegalArgumentException("Manual charge amount must be strictly greater than zero. Provided: " + amount);
+        }
         BillingRecord bill = getOrCreateActiveBill(patientId);
         BillingLineItem item = billingDAO.addLineItem(bill.getBillId(), description, amount);
 
@@ -140,7 +143,7 @@ public class BillingService implements PatientTransferListener {
                 "BILLING_SERVICE",
                 "MANUAL_CHARGE_ADDED",
                 String.valueOf(patientId),
-                String.format("Manual charge '$%s' ($%.2f) appended to bill #%d", description, amount, bill.getBillId())
+                String.format("Manual charge '%s' ($%.2f) appended to bill #%d", description, amount, bill.getBillId())
         );
         return item;
     }
@@ -172,6 +175,12 @@ public class BillingService implements PatientTransferListener {
      * @return {@code true} if successfully marked paid
      */
     public boolean settleBill(long billId, String actor) {
+        Optional<BillingRecord> existingOpt = billingDAO.findBillById(billId);
+        if (existingOpt.isPresent() && existingOpt.get().isPaid()) {
+            LOGGER.warning("[BillingService] Bill #" + billId + " is already marked PAID. Rejecting redundant settlement.");
+            return false;
+        }
+
         boolean success = billingDAO.markBillPaid(billId);
         if (success) {
             auditDAO.log(
@@ -187,7 +196,10 @@ public class BillingService implements PatientTransferListener {
     // ──────────────────────────── Helper ────────────────────────────
 
     private BillingRecord getOrCreateActiveBill(long patientId) {
-        return billingDAO.findActiveBillByPatientId(patientId)
-                .orElseGet(() -> billingDAO.createBillingRecord(patientId));
+        Optional<BillingRecord> activeOpt = billingDAO.findActiveBillByPatientId(patientId);
+        if (activeOpt.isPresent() && !activeOpt.get().isPaid()) {
+            return activeOpt.get();
+        }
+        return billingDAO.createBillingRecord(patientId);
     }
 }

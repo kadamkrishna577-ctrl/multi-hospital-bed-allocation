@@ -27,8 +27,9 @@ import java.util.List;
  * Ward Infection Containment &amp; Bed Adjacency Control Panel (SRS F12 &amp; Use Case U4).
  * <p>
  * Provides live visualization of ward topology, automatic containment buffer locking
- * for neighbor and shared-air beds, and a patient ward transfer simulator that triggers
- * live updates across Billing and Kitchen services.
+ * for neighbor and shared-air beds, cross-contamination exposure warnings for occupied
+ * adjacent beds, and a patient ward transfer simulator that triggers live updates across
+ * Billing and Kitchen services.
  * </p>
  *
  * @author Jatin (Module P3)
@@ -66,6 +67,9 @@ public class IsolationControlPanel extends JPanel {
     private JCheckBox monCheckBox;
     private JCheckBox contagiousCheckBox;
 
+    /** Guard flag preventing recursive feedback loops during two-way selection sync. */
+    private boolean isUpdatingSelection = false;
+
     public IsolationControlPanel(IsolationContainmentService containmentService,
                                  WardTopologyDAO wardTopologyDAO,
                                  BedDAO bedDAO,
@@ -93,7 +97,7 @@ public class IsolationControlPanel extends JPanel {
         initDemoDataIfEmpty();
 
         // 4. Initial table population
-        refreshTable();
+        refreshTopology();
     }
 
     private JPanel createHeaderBanner() {
@@ -101,11 +105,11 @@ public class IsolationControlPanel extends JPanel {
         banner.setBackground(new Color(15, 118, 110)); // Deep Teal
         banner.setBorder(new EmptyBorder(12, 15, 12, 15));
 
-        JLabel title = new JLabel("🛡️ INFECTION CONTAINMENT & WARD TOPOLOGY CONTROL");
+        JLabel title = new JLabel("[ISO] INFECTION CONTAINMENT & WARD TOPOLOGY CONTROL");
         title.setFont(new Font("Segoe UI", Font.BOLD, 16));
         title.setForeground(Color.WHITE);
 
-        JLabel subtitle = new JLabel("Module P3: Dynamic Buffer Locking • Shared-Air Circulation • Ward Adjacency");
+        JLabel subtitle = new JLabel("Module P3: Dynamic Buffer Locking • Shared-Air Circulation • Cross-Contamination Alert");
         subtitle.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         subtitle.setForeground(new Color(204, 251, 241));
 
@@ -139,6 +143,30 @@ public class IsolationControlPanel extends JPanel {
         topologyTable.setRowHeight(26);
         topologyTable.setFont(new Font("Segoe UI", Font.PLAIN, 12));
         topologyTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
+        topologyTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+
+        // Two-way selection sync: Table row click -> Target Bed combo & Isolation Bed combo
+        topologyTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting() && !isUpdatingSelection) {
+                isUpdatingSelection = true;
+                try {
+                    int selectedRow = topologyTable.getSelectedRow();
+                    if (selectedRow >= 0 && selectedRow < topologyTableModel.getRowCount()) {
+                        Long bedId = (Long) topologyTableModel.getValueAt(selectedRow, 0);
+                        if (bedId != null) {
+                            if (transferToBedCombo != null) {
+                                transferToBedCombo.setSelectedItem(bedId);
+                            }
+                            if (isolationBedCombo != null) {
+                                isolationBedCombo.setSelectedItem(bedId);
+                            }
+                        }
+                    }
+                } finally {
+                    isUpdatingSelection = false;
+                }
+            }
+        });
 
         // Status badge renderer
         topologyTable.getColumnModel().getColumn(2).setCellRenderer(new DefaultTableCellRenderer() {
@@ -160,21 +188,38 @@ public class IsolationControlPanel extends JPanel {
                         setForeground(Color.DARK_GRAY);
                     }
                 }
+                if (isSelected) {
+                    setBackground(table.getSelectionBackground());
+                    setForeground(table.getSelectionForeground());
+                }
                 return c;
             }
         });
 
-        // Contagious source renderer
+        // Contagious source & exposure warning renderer
         topologyTable.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
             @Override
             public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
                 Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
-                if (value != null && value.toString().contains("CONTAGIOUS")) {
-                    setForeground(new Color(220, 38, 38));
+                if (value != null) {
+                    String val = value.toString();
                     setFont(getFont().deriveFont(Font.BOLD));
-                } else {
-                    setForeground(Color.GRAY);
-                    setFont(getFont().deriveFont(Font.PLAIN));
+                    if (val.contains("CONTAGIOUS")) {
+                        setForeground(new Color(220, 38, 38)); // Crimson Red
+                    } else if (val.contains("EXPOSED")) {
+                        setForeground(new Color(234, 88, 12)); // Orange-Red Hazard
+                    } else if (val.contains("PENDING CLEAN")) {
+                        setForeground(new Color(185, 28, 28)); // Red Alert
+                    } else if (val.contains("BUFFER")) {
+                        setForeground(new Color(217, 119, 6)); // Amber
+                    } else {
+                        setForeground(Color.GRAY);
+                        setFont(getFont().deriveFont(Font.PLAIN));
+                    }
+                }
+                if (isSelected) {
+                    setBackground(table.getSelectionBackground());
+                    setForeground(table.getSelectionForeground());
                 }
                 return c;
             }
@@ -185,37 +230,26 @@ public class IsolationControlPanel extends JPanel {
         topologyTable.getColumnModel().getColumn(2).setPreferredWidth(140);
         topologyTable.getColumnModel().getColumn(3).setPreferredWidth(180);
         topologyTable.getColumnModel().getColumn(4).setPreferredWidth(180);
-        topologyTable.getColumnModel().getColumn(5).setPreferredWidth(150);
+        topologyTable.getColumnModel().getColumn(5).setPreferredWidth(170);
 
         panel.add(new JScrollPane(topologyTable), BorderLayout.CENTER);
-
-        // Quick refresh toolbar
-        JPanel tb = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
-        JButton refreshBtn = new JButton("🔄 Refresh Topology");
-        refreshBtn.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        refreshBtn.addActionListener(e -> refreshTable());
-        tb.add(refreshBtn);
-        panel.add(tb, BorderLayout.SOUTH);
-
         return panel;
     }
 
-    // ──────────────────────────── Controls Section ────────────────────────────
+    // ──────────────────────────── Controls Tabs ────────────────────────────
 
-    private JPanel createControlsTabbedPanel() {
-        JTabbedPane subTabs = new JTabbedPane();
-        subTabs.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+    private JTabbedPane createControlsTabbedPanel() {
+        JTabbedPane tabbed = new JTabbedPane();
+        tabbed.setFont(new Font("Segoe UI", Font.BOLD, 12));
 
-        subTabs.addTab("🚨 Containment Lock / Release", createContainmentPanel());
-        subTabs.addTab("🔄 Ward Transfer Simulator", createTransferSimulatorPanel());
-        subTabs.addTab("🔗 Add Topology Adjacency Link", createTopologyLinkPanel());
+        tabbed.addTab("[ISO] Contagious Containment Controls", createContainmentControlsPanel());
+        tabbed.addTab("[TRANSFER] Ward Transfer Simulator (Fires Observers)", createTransferSimulatorPanel());
+        tabbed.addTab("[LINK] Add Ward Adjacency Link", createTopologyLinkPanel());
 
-        JPanel container = new JPanel(new BorderLayout());
-        container.add(subTabs, BorderLayout.CENTER);
-        return container;
+        return tabbed;
     }
 
-    private JPanel createContainmentPanel() {
+    private JPanel createContainmentControlsPanel() {
         JPanel panel = new JPanel(new GridBagLayout());
         panel.setBorder(new EmptyBorder(12, 16, 12, 16));
         GridBagConstraints gbc = new GridBagConstraints();
@@ -227,11 +261,29 @@ public class IsolationControlPanel extends JPanel {
         panel.add(new JLabel("Target Bed ID:"), gbc);
 
         isolationBedCombo = new JComboBox<>();
+        isolationBedCombo.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        isolationBedCombo.addActionListener(e -> {
+            if (!isUpdatingSelection) {
+                isUpdatingSelection = true;
+                try {
+                    Long bedId = (Long) isolationBedCombo.getSelectedItem();
+                    if (bedId != null) {
+                        syncTableRowSelection(bedId);
+                        if (transferToBedCombo != null) {
+                            transferToBedCombo.setSelectedItem(bedId);
+                        }
+                    }
+                } finally {
+                    isUpdatingSelection = false;
+                }
+            }
+        });
+
         gbc.gridx = 1; gbc.gridy = 0; gbc.weightx = 1.0;
         panel.add(isolationBedCombo, gbc);
 
         // Activate Isolation Button
-        JButton activateBtn = new JButton("🚨 Activate Contagious Isolation (Lock Buffers)");
+        JButton activateBtn = new JButton("[!] Activate Contagious Isolation (Lock Buffers)");
         activateBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         activateBtn.setBackground(new Color(220, 38, 38)); // Crimson Red
         activateBtn.setForeground(Color.WHITE);
@@ -242,7 +294,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(activateBtn, gbc);
 
         // Release Isolation Button
-        JButton releaseBtn = new JButton("✓ Release Isolation (Restore Buffers to VACANT)");
+        JButton releaseBtn = new JButton("[OK] Release Isolation (Restore Buffers to VACANT)");
         releaseBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
         releaseBtn.setBackground(new Color(22, 101, 52)); // Forest Green
         releaseBtn.setForeground(Color.WHITE);
@@ -253,7 +305,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(releaseBtn, gbc);
 
         // Explanatory note
-        JLabel note = new JLabel("<html><span style='color:#64748b;'>Activating isolation locks all adjacent (NEIGHBOR) and HVAC-sharing (SHARED_AIR) vacant beds into RESTRICTED_BUFFER. Overlapping safety zones are preserved until all exposing sources resolve.</span></html>");
+        JLabel note = new JLabel("<html><span style='color:#64748b;'>Activating isolation locks all adjacent (NEIGHBOR) and HVAC-sharing (SHARED_AIR) vacant beds into RESTRICTED_BUFFER. If an adjacent bed is occupied, it is flagged as EXPOSED (EVACUATE). Overlapping safety zones are preserved.</span></html>");
         note.setFont(new Font("Segoe UI", Font.PLAIN, 11));
         gbc.gridy = 3;
         panel.add(note, gbc);
@@ -325,7 +377,7 @@ public class IsolationControlPanel extends JPanel {
         transferHoursSpinner = new JSpinner(new SpinnerNumberModel(4, 1, 168, 1));
         optionsPanel.add(transferHoursSpinner);
 
-        contagiousCheckBox = new JCheckBox("⚠️ Patient is Contagious / Requires Isolation");
+        contagiousCheckBox = new JCheckBox("[!] Patient is Contagious / Requires Isolation");
         contagiousCheckBox.setForeground(new Color(185, 28, 28));
         contagiousCheckBox.setFont(new Font("Segoe UI", Font.BOLD, 12));
         optionsPanel.add(contagiousCheckBox);
@@ -334,7 +386,7 @@ public class IsolationControlPanel extends JPanel {
         panel.add(optionsPanel, gbc);
 
         // Row 5: Action Button
-        JButton transferBtn = new JButton("🔄 Execute Ward Transfer & Notify Observers");
+        JButton transferBtn = new JButton("[TRANSFER] Execute Ward Transfer & Notify Observers");
         transferBtn.setFont(new Font("Segoe UI", Font.BOLD, 13));
         transferBtn.setBackground(new Color(37, 99, 235)); // Primary Blue
         transferBtn.setForeground(Color.WHITE);
@@ -362,32 +414,30 @@ public class IsolationControlPanel extends JPanel {
         gbc.gridx = 1; gbc.gridy = 0;
         panel.add(linkBed1Combo, gbc);
 
-        gbc.gridx = 2; gbc.gridy = 0;
+        gbc.gridx = 0; gbc.gridy = 1;
         panel.add(new JLabel("Bed 2 ID:"), gbc);
 
         linkBed2Combo = new JComboBox<>();
-        gbc.gridx = 3; gbc.gridy = 0;
+        gbc.gridx = 1; gbc.gridy = 1;
         panel.add(linkBed2Combo, gbc);
 
-        gbc.gridx = 0; gbc.gridy = 1;
+        gbc.gridx = 0; gbc.gridy = 2;
         panel.add(new JLabel("Relationship:"), gbc);
 
         linkTypeCombo = new JComboBox<>(new String[]{
-                WardTopologyGraph.RELATION_NEIGHBOR + " (Physical Direct Adjacent)",
-                WardTopologyGraph.RELATION_SHARED_AIR + " (Shared HVAC Airflow)"
+                "NEIGHBOR (Physical Wall Adjacency)",
+                "SHARED_AIR (HVAC Ventilation Flow)"
         });
-        gbc.gridx = 1; gbc.gridy = 1; gbc.gridwidth = 3;
+        gbc.gridx = 1; gbc.gridy = 2;
         panel.add(linkTypeCombo, gbc);
 
-        JButton addLinkBtn = new JButton("🔗 Add Topology Adjacency Link");
+        JButton addLinkBtn = new JButton("[+] Add Adjacency Link");
         addLinkBtn.setFont(new Font("Segoe UI", Font.BOLD, 12));
-        addLinkBtn.setBackground(new Color(15, 118, 110));
-        addLinkBtn.setForeground(Color.WHITE);
         addLinkBtn.setFocusPainted(false);
         addLinkBtn.addActionListener(e -> handleAddTopologyLink());
 
-        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 4;
-        gbc.insets = new Insets(10, 6, 4, 6);
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 2;
+        gbc.insets = new Insets(12, 6, 6, 6);
         panel.add(addLinkBtn, gbc);
 
         return panel;
@@ -396,28 +446,75 @@ public class IsolationControlPanel extends JPanel {
     // ──────────────────────────── Action Handlers ────────────────────────────
 
     private void handleActivateIsolation() {
-        Long selectedBed = (Long) isolationBedCombo.getSelectedItem();
+        int row = topologyTable.getSelectedRow();
+        Long selectedBed = null;
+        if (row >= 0 && row < topologyTableModel.getRowCount()) {
+            selectedBed = (Long) topologyTableModel.getValueAt(row, 0);
+        }
+        if (selectedBed == null) {
+            selectedBed = (Long) isolationBedCombo.getSelectedItem();
+        }
+
         if (selectedBed == null) {
             JOptionPane.showMessageDialog(this, "Please select a bed to isolate.", "No Bed Selected", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        Set<Long> lockedBuffers = containmentService.activateIsolation(selectedBed, "CLINICAL_STAFF");
-        refreshTable();
+        // Keep synced with combo box
+        isolationBedCombo.setSelectedItem(selectedBed);
+        if (transferToBedCombo != null) {
+            transferToBedCombo.setSelectedItem(selectedBed);
+        }
 
-        String msg = String.format("Contagious isolation ACTIVATED on Bed #%d.\n" +
-                        "Safety Buffers Locked (%d beds): %s\n\n" +
-                        "These beds are now held in RESTRICTED_BUFFER and cannot receive patients.",
-                selectedBed, lockedBuffers.size(), lockedBuffers.isEmpty() ? "None (no vacant adjacent beds)" : lockedBuffers);
-        JOptionPane.showMessageDialog(this, msg, "Isolation Active", JOptionPane.INFORMATION_MESSAGE);
+        try {
+            Set<Long> lockedBuffers = containmentService.activateIsolation(selectedBed, "CLINICAL_STAFF");
+            Set<Long> exposedOccupied = containmentService.getExposedOccupiedBeds(selectedBed);
+
+            refreshTopology();
+
+            // 3. Occupied Neighbor Exposure Warning
+            if (!exposedOccupied.isEmpty()) {
+                String warnMsg = String.format(
+                        "<html><b style='color:#dc2626; font-size:13px;'>[!] CROSS-CONTAMINATION HAZARD DETECTED!</b><br><br>" +
+                        "Contagious isolation on Bed #%d exposes adjacent occupied bed(s):<br>" +
+                        "<b style='color:#b91c1c; font-size:12px;'>• Occupied Bed(s) at Risk: %s</b><br><br>" +
+                        "Status in grid marked as: <b style='color:#ea580c;'>[!] EXPOSED (EVACUATE)</b><br>" +
+                        "Cross-contamination risk alert: Immediate patient transfer / ward evacuation required!</html>",
+                        selectedBed, exposedOccupied);
+
+                JOptionPane.showMessageDialog(this, warnMsg, "Cross-Contamination Warning", JOptionPane.WARNING_MESSAGE);
+            }
+
+            String msg = String.format("Contagious isolation ACTIVATED on Bed #%d.\n" +
+                            "Safety Buffers Locked (%d beds): %s\n" +
+                            "Exposed Occupied Bed(s) Requiring Transfer (%d beds): %s\n\n" +
+                            "Vacant buffer beds are held in RESTRICTED_BUFFER and cannot receive patients.",
+                    selectedBed, lockedBuffers.size(), lockedBuffers.isEmpty() ? "None (no vacant adjacent beds)" : lockedBuffers,
+                    exposedOccupied.size(), exposedOccupied.isEmpty() ? "None" : exposedOccupied);
+            JOptionPane.showMessageDialog(this, msg, "Isolation Active", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalBedStateException ex) {
+            JOptionPane.showMessageDialog(this, "Isolation Activation Blocked:\n" + ex.getMessage(),
+                    "Invalid Isolation Target", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void handleReleaseIsolation() {
-        Long selectedBed = (Long) isolationBedCombo.getSelectedItem();
+        int row = topologyTable.getSelectedRow();
+        Long selectedBed = null;
+        if (row >= 0 && row < topologyTableModel.getRowCount()) {
+            selectedBed = (Long) topologyTableModel.getValueAt(row, 0);
+        }
+        if (selectedBed == null) {
+            selectedBed = (Long) isolationBedCombo.getSelectedItem();
+        }
+
         if (selectedBed == null) {
             JOptionPane.showMessageDialog(this, "Please select a bed to release.", "No Bed Selected", JOptionPane.WARNING_MESSAGE);
             return;
         }
+
+        // Keep synced with combo box
+        isolationBedCombo.setSelectedItem(selectedBed);
 
         if (!containmentService.isBedIsolated(selectedBed)) {
             JOptionPane.showMessageDialog(this, "Bed #" + selectedBed + " is not currently under isolation.", "Info", JOptionPane.INFORMATION_MESSAGE);
@@ -425,7 +522,7 @@ public class IsolationControlPanel extends JPanel {
         }
 
         Set<Long> released = containmentService.releaseIsolation(selectedBed, "CLINICAL_STAFF");
-        refreshTable();
+        refreshTopology();
 
         String msg = String.format("Contagious isolation RELEASED for Bed #%d.\n" +
                         "Freed Buffers Restored to VACANT (%d beds): %s",
@@ -452,12 +549,17 @@ public class IsolationControlPanel extends JPanel {
                 ? WardTopologyGraph.RELATION_SHARED_AIR
                 : WardTopologyGraph.RELATION_NEIGHBOR;
 
-        wardTopologyDAO.insertEdge(bed1, bed2, type);
-        refreshTable();
+        try {
+            wardTopologyDAO.insertEdge(bed1, bed2, type);
+            containmentService.onTopologyEdgeAdded(bed1, bed2, type);
+            refreshTopology();
 
-        JOptionPane.showMessageDialog(this,
-                String.format("Added bidirectional %s edge between Bed #%d and Bed #%d.", type, bed1, bed2),
-                "Link Created", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this,
+                    String.format("Added bidirectional %s edge between Bed #%d and Bed #%d.", type, bed1, bed2),
+                    "Link Created", JOptionPane.INFORMATION_MESSAGE);
+        } catch (IllegalArgumentException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid Link", JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     private void handleExecuteTransfer() {
@@ -510,7 +612,7 @@ public class IsolationControlPanel extends JPanel {
         // 4. Execute Transfer
         try {
             containmentService.transferPatient(patient, fromBed, decoratedTarget, hours, contagious, "SIMULATOR_USER");
-            refreshTable();
+            refreshTopology();
 
             double sourceCharge = Math.max(1, hours) * fromBed.getHourlyCost();
             String msg = String.format("<html><b>Transfer Successfully Executed!</b><br><br>" +
@@ -538,16 +640,38 @@ public class IsolationControlPanel extends JPanel {
 
     // ──────────────────────────── Data Sync & Refresh ────────────────────────────
 
+    /**
+     * Alias for {@link #refreshTopology()} to maintain backwards compatibility with dashboard tab listeners.
+     */
     public void refreshTable() {
+        refreshTopology();
+    }
+
+    /**
+     * Refreshes the topology table and drop-down selectors while strictly preserving
+     * currently active bed selections so that dropdowns never reset back to bed 101.
+     */
+    public void refreshTopology() {
+        // Save current selections before updating
+        Long savedIsoBedId = (isolationBedCombo != null) ? (Long) isolationBedCombo.getSelectedItem() : null;
+        Long savedToBedId = (transferToBedCombo != null) ? (Long) transferToBedCombo.getSelectedItem() : null;
+        Long savedFromBedId = (transferFromBedCombo != null) ? (Long) transferFromBedCombo.getSelectedItem() : null;
+
+        int selectedRow = (topologyTable != null) ? topologyTable.getSelectedRow() : -1;
+        Long savedTableBedId = (selectedRow >= 0 && selectedRow < topologyTableModel.getRowCount())
+                ? (Long) topologyTableModel.getValueAt(selectedRow, 0)
+                : null;
+
+        Long preferredBedId = (savedTableBedId != null) ? savedTableBedId : savedIsoBedId;
+
         topologyTableModel.setRowCount(0);
 
         WardTopologyGraph graph = wardTopologyDAO.loadTopologyGraph();
         Set<Long> allBeds = new TreeSet<>(graph.getAllBeds());
 
-        // Also add any registered beds from service
-        for (Long regId : containmentService.getActiveIsolatedBeds()) {
-            allBeds.add(regId);
-        }
+        // Also add any registered and isolated beds from containment service
+        allBeds.addAll(containmentService.getRegisteredBeds().keySet());
+        allBeds.addAll(containmentService.getActiveIsolatedBeds());
 
         // Update dropdown choices
         DefaultComboBoxModel<Long> comboModel1 = new DefaultComboBoxModel<>();
@@ -569,7 +693,7 @@ public class IsolationControlPanel extends JPanel {
 
             Set<Long> neighbors = graph.getDirectNeighbors(bedId);
             Set<Long> sharedAir = graph.getSharedAirBeds(bedId);
-            boolean isolated = containmentService.isBedIsolated(bedId);
+            String contagiousStatus = containmentService.getContagiousSourceStatus(bedId);
 
             topologyTableModel.addRow(new Object[]{
                     bedId,
@@ -577,25 +701,79 @@ public class IsolationControlPanel extends JPanel {
                     status.name(),
                     neighbors.isEmpty() ? "—" : neighbors.toString(),
                     sharedAir.isEmpty() ? "—" : sharedAir.toString(),
-                    isolated ? "⚠️ CONTAGIOUS ISOLATION" : "Normal"
+                    contagiousStatus
             });
         }
 
-        linkBed1Combo.setModel(comboModel1);
-        linkBed2Combo.setModel(comboModel2);
-        isolationBedCombo.setModel(isoModel);
-        transferFromBedCombo.setModel(fromModel);
-        transferToBedCombo.setModel(toModel);
+        isUpdatingSelection = true;
+        try {
+            linkBed1Combo.setModel(comboModel1);
+            linkBed2Combo.setModel(comboModel2);
+            isolationBedCombo.setModel(isoModel);
+            transferFromBedCombo.setModel(fromModel);
+            transferToBedCombo.setModel(toModel);
 
-        if (toModel.getSize() > 1) {
-            transferToBedCombo.setSelectedIndex(1);
+            // Restore isolationBedCombo
+            if (preferredBedId != null && containsElement(isoModel, preferredBedId)) {
+                isolationBedCombo.setSelectedItem(preferredBedId);
+            } else if (isoModel.getSize() > 0) {
+                isolationBedCombo.setSelectedIndex(0);
+            }
+
+            // Restore transferToBedCombo
+            Long toRestore = (savedToBedId != null) ? savedToBedId : preferredBedId;
+            if (toRestore != null && containsElement(toModel, toRestore)) {
+                transferToBedCombo.setSelectedItem(toRestore);
+            } else if (toModel.getSize() > 1) {
+                transferToBedCombo.setSelectedIndex(1);
+            } else if (toModel.getSize() > 0) {
+                transferToBedCombo.setSelectedIndex(0);
+            }
+
+            // Restore transferFromBedCombo
+            if (savedFromBedId != null && containsElement(fromModel, savedFromBedId)) {
+                transferFromBedCombo.setSelectedItem(savedFromBedId);
+            } else if (fromModel.getSize() > 0) {
+                transferFromBedCombo.setSelectedIndex(0);
+            }
+
+            // Restore table row selection
+            Long bedToSelectInTable = (preferredBedId != null) ? preferredBedId : (Long) isolationBedCombo.getSelectedItem();
+            if (bedToSelectInTable != null) {
+                syncTableRowSelection(bedToSelectInTable);
+            }
+        } finally {
+            isUpdatingSelection = false;
         }
     }
 
-    private void initDemoDataIfEmpty() {
-        WardTopologyGraph existing = wardTopologyDAO.loadTopologyGraph();
-        if (existing.getAllBeds().isEmpty()) {
-            // Seed 6 realistic demo beds
+    private boolean containsElement(DefaultComboBoxModel<Long> model, Long item) {
+        if (model == null || item == null) return false;
+        for (int i = 0; i < model.getSize(); i++) {
+            if (item.equals(model.getElementAt(i))) return true;
+        }
+        return false;
+    }
+
+    private void syncTableRowSelection(Long bedId) {
+        if (bedId == null || topologyTable == null || topologyTableModel == null) return;
+        for (int i = 0; i < topologyTableModel.getRowCount(); i++) {
+            Object val = topologyTableModel.getValueAt(i, 0);
+            if (bedId.equals(val)) {
+                topologyTable.setRowSelectionInterval(i, i);
+                break;
+            }
+        }
+    }
+
+    public void initDemoDataIfEmpty() {
+        // Ensure all beds from BedDAO are registered in containmentService
+        for (BaseBed b : bedDAO.findAllBeds()) {
+            containmentService.registerBed(b);
+        }
+
+        // Ensure in-memory demo beds are registered in containmentService if still empty
+        if (containmentService.getRegisteredBeds().isEmpty()) {
             BaseBed b101 = new BaseBed(101L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
             BaseBed b102 = new BaseBed(102L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
             BaseBed b103 = new BaseBed(103L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
@@ -611,7 +789,10 @@ public class IsolationControlPanel extends JPanel {
             containmentService.registerBed(b104);
             containmentService.registerBed(b105);
             containmentService.registerBed(b106);
+        }
 
+        WardTopologyGraph existing = wardTopologyDAO.loadTopologyGraph();
+        if (existing.getAllBeds().isEmpty()) {
             // Seed adjacency edges
             wardTopologyDAO.insertEdge(101L, 102L, WardTopologyGraph.RELATION_NEIGHBOR);
             wardTopologyDAO.insertEdge(102L, 103L, WardTopologyGraph.RELATION_NEIGHBOR);

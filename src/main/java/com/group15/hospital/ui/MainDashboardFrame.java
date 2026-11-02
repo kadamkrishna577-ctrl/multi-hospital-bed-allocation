@@ -100,6 +100,10 @@ public class MainDashboardFrame extends JFrame {
         this.isolationService.registerListener(this.billingService);
         this.isolationService.registerListener(this.kitchenService);
 
+        // Wire SanitizationService with BedDAO and IsolationContainmentService for live re-evaluation
+        this.sanitizationService.setBedDAO(this.bedDAO);
+        this.sanitizationService.setIsolationContainmentService(this.isolationService);
+
         // 3. Register Global Triage Alert Observer for Popups
         TriageAlertPopupHandler popupHandler = new TriageAlertPopupHandler(alertDAO, this);
         this.alertManager.registerObserver(popupHandler);
@@ -121,7 +125,8 @@ public class MainDashboardFrame extends JFrame {
         tabbedPane.setFont(new Font("SansSerif", Font.BOLD, 13));
 
         // Tab 1: Triage Registration & Bed Search (Saksham - P1)
-        tabbedPane.addTab("🏥 Triage & Allocation", new TriageRegistrationPanel());
+        TriageRegistrationPanel triagePanel = new TriageRegistrationPanel();
+        tabbedPane.addTab("🏥 Triage & Allocation", triagePanel);
 
         // Tab 2: Equipment Management & Maintenance (Krishna - P2)
         EquipmentManagementPanel equipmentPanel = new EquipmentManagementPanel(maintenanceService);
@@ -150,13 +155,19 @@ public class MainDashboardFrame extends JFrame {
                 billingService, kitchenService);
         tabbedPane.addTab("💳 Billing & Kitchen (P3)", billingKitchenPanel);
 
-        // Listen for tab switching to trigger dynamic refresh
+        // Listen for tab switching to trigger dynamic refresh across all tabs
         tabbedPane.addChangeListener(e -> {
             Component selected = tabbedPane.getSelectedComponent();
             if (selected == isolationPanel) {
                 isolationPanel.refreshTable();
             } else if (selected == billingKitchenPanel) {
                 billingKitchenPanel.refreshData();
+            } else if (selected == sanitizationPanel) {
+                sanitizationPanel.refreshTable();
+            } else if (selected == equipmentPanel) {
+                equipmentPanel.refreshData();
+            } else if (selected == triagePanel) {
+                triagePanel.refreshPatientTable();
             }
         });
 

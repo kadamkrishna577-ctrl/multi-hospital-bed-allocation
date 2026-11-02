@@ -270,6 +270,17 @@ public class SanitizationStaffPanel extends JPanel {
                 dirtyBedRegistry.remove(bedId);
                 cleanedCount++;
 
+                BedStatus finalStatus = BedStatus.VACANT;
+                if (sanitizationService.getBedDAO() != null) {
+                    Optional<com.group15.hospital.model.bed.BaseBed> bOpt = sanitizationService.getBedDAO().findById(bedId);
+                    if (bOpt.isPresent()) {
+                        finalStatus = bOpt.get().getBedStatus();
+                    }
+                }
+                String transitionStr = (finalStatus == BedStatus.RESTRICTED_BUFFER)
+                        ? String.format("REQUIRES_SANITIZATION → RESTRICTED_BUFFER [Isolation Buffer Lock] (%d ms)", elapsed)
+                        : String.format("REQUIRES_SANITIZATION → VACANT (%d ms)", elapsed);
+
                 // Add to history log
                 logTableModel.insertRow(0, new Object[]{
                         LocalDateTime.now().format(TIME_FMT),
@@ -277,7 +288,7 @@ public class SanitizationStaffPanel extends JPanel {
                         hospital,
                         ward,
                         staffName,
-                        String.format("REQUIRES_SANITIZATION → VACANT (%d ms)", elapsed)
+                        transitionStr
                 });
 
             } catch (IllegalBedStateException ibse) {
@@ -330,6 +341,16 @@ public class SanitizationStaffPanel extends JPanel {
     }
 
     public void refreshTable() {
+        if (sanitizationService != null && sanitizationService.getBedDAO() != null) {
+            for (com.group15.hospital.model.bed.BaseBed bed : sanitizationService.getBedDAO().findAllBeds()) {
+                if (bed.getBedStatus() == BedStatus.REQUIRES_SANITIZATION) {
+                    if (!dirtyBedRegistry.containsKey(bed.getBedId())) {
+                        addDirtyBed(bed.getBedId(), bed.getHospitalName(), bed.getWardName());
+                    }
+                }
+            }
+        }
+
         dirtyTableModel.setRowCount(0);
         String selectedFilter = (String) hospitalFilterCombo.getSelectedItem();
         boolean filterAll = (selectedFilter == null || selectedFilter.equals("All Hospitals"));
@@ -383,13 +404,25 @@ public class SanitizationStaffPanel extends JPanel {
         sanitizationService.markRoomSanitized(bedId, staffName, r.hospitalName, r.wardName);
         long elapsed = System.currentTimeMillis() - start;
         dirtyBedRegistry.remove(bedId);
+
+        BedStatus finalStatus = BedStatus.VACANT;
+        if (sanitizationService.getBedDAO() != null) {
+            BaseBed b = sanitizationService.getBedDAO().findById(bedId);
+            if (b != null) {
+                finalStatus = b.getStatus();
+            }
+        }
+        String transitionLabel = (finalStatus == BedStatus.RESTRICTED_BUFFER)
+                ? "RESTRICTED_BUFFER [Isolation Buffer Lock]"
+                : "VACANT";
+
         logTableModel.insertRow(0, new Object[]{
                 LocalDateTime.now().format(TIME_FMT),
                 bedId,
                 r.hospitalName,
                 r.wardName,
                 staffName,
-                String.format("REQUIRES_SANITIZATION -> VACANT (%d ms)", elapsed)
+                String.format("REQUIRES_SANITIZATION -> %s (%d ms)", transitionLabel, elapsed)
         });
         refreshTable();
         return true;

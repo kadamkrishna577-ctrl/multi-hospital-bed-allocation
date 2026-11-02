@@ -14,6 +14,9 @@ import com.group15.hospital.model.isolation.WardTopologyGraph;
 import com.group15.hospital.service.auxiliary.BillingService;
 import com.group15.hospital.service.auxiliary.KitchenService;
 import com.group15.hospital.service.containment.IsolationContainmentService;
+import com.group15.hospital.service.dispatch.AlertNotificationManager;
+import com.group15.hospital.service.dispatch.SanitizationService;
+import com.group15.hospital.service.preemption.WaitlistManager;
 import com.group15.hospital.ui.auxiliary.BillingAndKitchenPanel;
 import com.group15.hospital.ui.auxiliary.IsolationControlPanel;
 
@@ -213,6 +216,63 @@ class IsolationAndBillingTest {
             assertTrue(releasedAfterBed3.contains(2L), "Bed 2 should be released when all contagious sources resolve");
             assertEquals(BedStatus.VACANT, bed2.getBedStatus(), "Bed 2 should return to VACANT");
         }
+
+        @Test
+        @DisplayName("Isolating Bed 105 updates in-memory registry, locking 104 and 106 buffers")
+        void testIsolatingBed105LocksVacant104And106BuffersAndReleases() {
+            wardTopologyDAO.insertEdge(104L, 105L, WardTopologyGraph.RELATION_NEIGHBOR);
+            wardTopologyDAO.insertEdge(105L, 106L, WardTopologyGraph.RELATION_SHARED_AIR);
+
+            BaseBed b104 = new BaseBed(104L, "General Medicine Ward B", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b105 = new BaseBed(105L, "General Medicine Ward B", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b106 = new BaseBed(106L, "Infectious Isolation Ward C", "City Central Hospital", BedStatus.VACANT);
+
+            containmentService.registerBed(b104);
+            containmentService.registerBed(b105);
+            containmentService.registerBed(b106);
+
+            Set<Long> locked = containmentService.activateIsolation(105L, "STAFF");
+            assertTrue(locked.contains(104L), "Bed 104 should be locked as neighbor buffer");
+            assertTrue(locked.contains(106L), "Bed 106 should be locked as shared air buffer");
+            assertTrue(containmentService.isBedIsolated(105L));
+            assertEquals(BedStatus.RESTRICTED_BUFFER, containmentService.getBed(104L).getBedStatus());
+            assertEquals(BedStatus.RESTRICTED_BUFFER, containmentService.getBed(106L).getBedStatus());
+            assertEquals(BedStatus.OCCUPIED, containmentService.getBed(105L).getBedStatus());
+
+            Set<Long> released = containmentService.releaseIsolation(105L, "STAFF");
+            assertTrue(released.contains(104L));
+            assertTrue(released.contains(106L));
+            assertFalse(containmentService.isBedIsolated(105L));
+            assertEquals(BedStatus.VACANT, containmentService.getBed(104L).getBedStatus());
+            assertEquals(BedStatus.VACANT, containmentService.getBed(106L).getBedStatus());
+            assertEquals(BedStatus.VACANT, containmentService.getBed(105L).getBedStatus());
+        }
+
+        @Test
+        @DisplayName("Occupied neighbor bed is flagged as EXPOSED with hazard warning when adjacent bed is isolated")
+        void testOccupiedNeighborExposureFlaggedWhenBedIsolated() {
+            wardTopologyDAO.insertEdge(101L, 102L, WardTopologyGraph.RELATION_NEIGHBOR);
+
+            BaseBed b101 = new BaseBed(101L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            BaseBed b102 = new BaseBed(102L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            b102.assignPatient(5001L, "Robert Chen", TriageLevel.LEVEL_3);
+
+            containmentService.registerBed(b101);
+            containmentService.registerBed(b102);
+
+            assertEquals(BedStatus.OCCUPIED, b102.getBedStatus());
+
+            // Activate isolation on Bed 101 -> Bed 102 is occupied so cannot become RESTRICTED_BUFFER
+            containmentService.activateIsolation(101L, "STAFF");
+
+            assertTrue(containmentService.isBedExposed(102L), "Bed 102 must be marked as EXPOSED");
+            assertTrue(containmentService.getExposedOccupiedBeds(101L).contains(102L));
+            assertEquals(BedStatus.OCCUPIED, b102.getBedStatus(), "Occupied bed must not be overwritten to buffer");
+
+            // Release isolation -> Bed 102 is no longer exposed
+            containmentService.releaseIsolation(101L, "STAFF");
+            assertFalse(containmentService.isBedExposed(102L), "Bed 102 should no longer be exposed once isolation resolves");
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -395,6 +455,225 @@ class IsolationAndBillingTest {
                 assertNotNull(panel);
                 panel.refreshData();
             }, "BillingAndKitchenPanel should instantiate and refresh without throwing any exceptions");
+        }
+
+        @Test
+        @DisplayName("IsolationControlPanel preserves selection on refresh and syncs two-way selection cleanly")
+        void testSelectionPreservedAndTwoWaySync() {
+            IsolationControlPanel panel = new IsolationControlPanel(
+                    containmentService, wardTopologyDAO, bedDAO, patientDAO);
+
+            assertDoesNotThrow(panel::refreshTopology);
+            assertDoesNotThrow(panel::refreshTable);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  4. Edge Cases & Synchronization Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    @Nested
+    @DisplayName("Edge Cases & Cross-Tab Synchronization Tests")
+    class EdgeCasesAndSynchronizationTests {
+
+        @Test
+        @DisplayName("Sanitization adjacent to active isolation auto-locks to RESTRICTED_BUFFER")
+        void testSanitizationAdjacentToActiveIsolationAutoLocks() {
+            // Setup topology: Bed 901 and Bed 902 are neighbors
+            wardTopologyDAO.insertEdge(901L, 902L, WardTopologyGraph.RELATION_NEIGHBOR);
+
+            BaseBed bed901 = new BaseBed(901L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            BaseBed bed902 = new BaseBed(902L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.REQUIRES_SANITIZATION);
+
+            bedDAO.updateBedStatus(901L, BedStatus.VACANT);
+            bedDAO.updateBedStatus(902L, BedStatus.REQUIRES_SANITIZATION);
+            containmentService.registerBed(bed901);
+            containmentService.registerBed(bed902);
+
+            // Activate isolation on bed 901
+            containmentService.activateIsolation(901L, "TEST_NURSE");
+            assertTrue(containmentService.isBedIsolated(901L));
+
+            // Verify bed 902 is dirty and exposed
+            assertEquals("[CLEAN] BUFFER PENDING CLEAN", containmentService.getContagiousSourceStatus(902L));
+
+            // Initialize SanitizationService with containmentService and bedDAO
+            AlertDAO testAlertDAO = new AlertDAO();
+            AlertNotificationManager notifManager = AlertNotificationManager.getInstance(testAlertDAO);
+            WaitlistDAO testWaitlistDAO = new WaitlistDAO();
+            WaitlistManager waitlistMgr = new WaitlistManager(testWaitlistDAO, true);
+
+            SanitizationService sanitizationService = new SanitizationService(testAlertDAO, notifManager, waitlistMgr);
+            sanitizationService.setBedDAO(bedDAO);
+            sanitizationService.setIsolationContainmentService(containmentService);
+            sanitizationService.seedBedState(902L, BedStatus.REQUIRES_SANITIZATION, "City Central Hospital", "Emergency ICU Ward A");
+
+            // Execute sanitization on bed 902
+            sanitizationService.markRoomSanitized(902L, "CLEANER_DAN");
+
+            // Assert bed 902 auto-locked to RESTRICTED_BUFFER instead of VACANT!
+            assertEquals(BedStatus.RESTRICTED_BUFFER, sanitizationService.getCurrentBedStatus(902L));
+            assertEquals(BedStatus.RESTRICTED_BUFFER, bedDAO.findById(902L).orElseThrow().getBedStatus());
+            assertEquals("[BUF] SAFETY BUFFER LOCKED", containmentService.getContagiousSourceStatus(902L));
+        }
+
+        @Test
+        @DisplayName("Sanitization with no contagious neighbor transitions to VACANT")
+        void testSanitizationWithNoContagiousNeighborSetsVacant() {
+            BaseBed bed903 = new BaseBed(903L, "General Ward", "City Central Hospital", BedStatus.REQUIRES_SANITIZATION);
+            bedDAO.updateBedStatus(903L, BedStatus.REQUIRES_SANITIZATION);
+            containmentService.registerBed(bed903);
+
+            AlertDAO testAlertDAO = new AlertDAO();
+            AlertNotificationManager notifManager = AlertNotificationManager.getInstance(testAlertDAO);
+            WaitlistDAO testWaitlistDAO = new WaitlistDAO();
+            WaitlistManager waitlistMgr = new WaitlistManager(testWaitlistDAO, true);
+
+            SanitizationService sanitizationService = new SanitizationService(testAlertDAO, notifManager, waitlistMgr);
+            sanitizationService.setBedDAO(bedDAO);
+            sanitizationService.setIsolationContainmentService(containmentService);
+            sanitizationService.seedBedState(903L, BedStatus.REQUIRES_SANITIZATION, "City Central Hospital", "General Ward");
+
+            sanitizationService.markRoomSanitized(903L, "CLEANER_DAN");
+
+            assertEquals(BedStatus.VACANT, sanitizationService.getCurrentBedStatus(903L));
+            assertEquals(BedStatus.VACANT, bedDAO.findById(903L).orElseThrow().getBedStatus());
+        }
+
+        @Test
+        @DisplayName("Adding dynamic topology edge to an already-isolated bed propagates buffer lock")
+        void testAddingEdgeToIsolatedBedPropagatesBufferLock() {
+            BaseBed bed905 = new BaseBed(905L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+            BaseBed bed906 = new BaseBed(906L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+
+            bedDAO.updateBedStatus(905L, BedStatus.VACANT);
+            bedDAO.updateBedStatus(906L, BedStatus.VACANT);
+            containmentService.registerBed(bed905);
+            containmentService.registerBed(bed906);
+
+            // Isolate bed 905 first
+            containmentService.activateIsolation(905L, "STAFF");
+
+            // Now dynamically add edge 905 <-> 906
+            wardTopologyDAO.insertEdge(905L, 906L, WardTopologyGraph.RELATION_NEIGHBOR);
+            containmentService.onTopologyEdgeAdded(905L, 906L, WardTopologyGraph.RELATION_NEIGHBOR);
+
+            // Bed 906 should immediately be locked to RESTRICTED_BUFFER
+            assertEquals(BedStatus.RESTRICTED_BUFFER, containmentService.getBed(906L).getBedStatus());
+            assertEquals(BedStatus.RESTRICTED_BUFFER, bedDAO.findById(906L).orElseThrow().getBedStatus());
+        }
+
+        @Test
+        @DisplayName("Self-loop edge rejection in graph and DAO")
+        void testSelfLoopEdgeRejection() {
+            WardTopologyGraph graph = new WardTopologyGraph();
+            assertThrows(IllegalArgumentException.class, () -> graph.addEdge(999L, 999L, WardTopologyGraph.RELATION_NEIGHBOR));
+            assertThrows(IllegalArgumentException.class, () -> wardTopologyDAO.insertEdge(999L, 999L, WardTopologyGraph.RELATION_NEIGHBOR));
+        }
+
+        @Test
+        @DisplayName("Transfer out of occupied exposed bed transitions source bed to REQUIRES_SANITIZATION")
+        void testTransferOutOfOccupiedExposedBedTransitionsToRequiresSanitization() {
+            // Bed 910 (isolated) <-> Bed 911 (occupied neighbor)
+            wardTopologyDAO.insertEdge(910L, 911L, WardTopologyGraph.RELATION_NEIGHBOR);
+
+            BaseBed bed910 = new BaseBed(910L, "ICU", "City Central Hospital", BedStatus.VACANT);
+            BaseBed bed911 = new BaseBed(911L, "ICU", "City Central Hospital", BedStatus.VACANT);
+            BaseBed bed912 = new BaseBed(912L, "General Ward", "City Central Hospital", BedStatus.VACANT);
+
+            containmentService.registerBed(bed910);
+            containmentService.registerBed(bed911);
+            containmentService.registerBed(bed912);
+
+            bedDAO.updateBedStatus(910L, BedStatus.VACANT);
+            bedDAO.updateBedStatus(911L, BedStatus.VACANT);
+            bedDAO.updateBedStatus(912L, BedStatus.VACANT);
+
+            // Admit patient to 911
+            Patient patient = new Patient(7771L, "Exposed Patient", 50, "Male", TriageLevel.LEVEL_3, 911L, DietType.REGULAR, null, null, false);
+            patientDAO.save(patient);
+            bed911.assignPatient(7771L, "Exposed Patient", TriageLevel.LEVEL_3);
+            bedDAO.updateBedStatus(911L, BedStatus.OCCUPIED);
+
+            // Activate isolation on 910 -> flags 911 as EXPOSED
+            containmentService.activateIsolation(910L, "STAFF");
+            assertTrue(containmentService.isBedExposed(911L));
+            assertEquals("[!] EXPOSED (EVACUATE)", containmentService.getContagiousSourceStatus(911L));
+
+            // Evacuate / Transfer patient from 911 to 912
+            containmentService.transferPatient(patient, bed911, bed912, 3L, false, "EVACUATION_OFFICER");
+
+            // Source bed 911 must now be in REQUIRES_SANITIZATION
+            assertEquals(BedStatus.REQUIRES_SANITIZATION, bed911.getBedStatus());
+            assertEquals(BedStatus.REQUIRES_SANITIZATION, bedDAO.findById(911L).orElseThrow().getBedStatus());
+            assertEquals(BedStatus.OCCUPIED, bed912.getBedStatus());
+        }
+
+        @Test
+        @DisplayName("Transfer rejects self-transfer and targets in invalid states")
+        void testTransferGuards() {
+            BaseBed bed1 = new BaseBed(921L, "Ward", "Hospital", BedStatus.OCCUPIED);
+            BaseBed bed2 = new BaseBed(922L, "Ward", "Hospital", BedStatus.RESTRICTED_BUFFER);
+            BaseBed bed3 = new BaseBed(923L, "Ward", "Hospital", BedStatus.REQUIRES_SANITIZATION);
+            BaseBed bed4 = new BaseBed(924L, "Ward", "Hospital", BedStatus.OCCUPIED);
+
+            Patient p = new Patient(7772L, "Test", 40, "Female", TriageLevel.LEVEL_3, 921L, DietType.REGULAR, null, null, false);
+
+            assertThrows(IllegalArgumentException.class, () -> containmentService.transferPatient(p, bed1, bed1, 2L, false, "TEST"));
+            assertThrows(IllegalBedStateException.class, () -> containmentService.transferPatient(p, bed1, bed2, 2L, false, "TEST"));
+            assertThrows(IllegalBedStateException.class, () -> containmentService.transferPatient(p, bed1, bed3, 2L, false, "TEST"));
+            assertThrows(IllegalBedStateException.class, () -> containmentService.transferPatient(p, bed1, bed4, 2L, false, "TEST"));
+        }
+
+        @Test
+        @DisplayName("Billing edge cases: negative charge rejected, double settlement prevented, new bill after payment")
+        void testBillingEdgeCases() {
+            // Negative or zero manual charge rejected
+            assertThrows(IllegalArgumentException.class, () -> billingService.addManualCharge(9991L, "Invalid", -10.0));
+            assertThrows(IllegalArgumentException.class, () -> billingService.addManualCharge(9991L, "Zero", 0.0));
+
+            // Valid charge creates active bill
+            BillingLineItem item = billingService.addManualCharge(9991L, "Medication", 50.0);
+            assertNotNull(item);
+            BillingRecord activeBill = billingService.getActiveBill(9991L).orElseThrow();
+            assertFalse(activeBill.isPaid());
+            assertEquals(50.0, activeBill.getTotalAmount(), 0.001);
+
+            // Settle bill
+            boolean settled = billingService.settleBill(activeBill.getBillId(), "CLERK");
+            assertTrue(settled);
+
+            // Redundant settlement rejected
+            boolean settledAgain = billingService.settleBill(activeBill.getBillId(), "CLERK");
+            assertFalse(settledAgain, "Double settlement should return false");
+
+            // Adding a new charge after settlement creates a NEW unpaid active bill
+            BillingLineItem newItem = billingService.addManualCharge(9991L, "Follow-up Lab", 30.0);
+            assertNotNull(newItem);
+            BillingRecord newBill = billingService.getActiveBill(9991L).orElseThrow();
+            assertNotEquals(activeBill.getBillId(), newBill.getBillId(), "Should be a distinct new bill ID");
+            assertFalse(newBill.isPaid());
+            assertEquals(30.0, newBill.getTotalAmount(), 0.001);
+        }
+
+        @Test
+        @DisplayName("Kitchen edge cases: terminal order status transitions rejected")
+        void testKitchenTerminalOrderStatusTransitions() {
+            KitchenMealOrder order = kitchenService.createMealOrder(9992L, DietType.REGULAR, KitchenMealOrder.STATUS_PENDING, "NURSE");
+            long orderId = order.getOrderId();
+
+            // Transition PENDING -> DELIVERED
+            boolean delivered = kitchenService.updateOrderStatus(orderId, KitchenMealOrder.STATUS_DELIVERED, "STAFF");
+            assertTrue(delivered);
+
+            // Attempting to change DELIVERED order to PREPARING must be rejected
+            boolean invalidTransition = kitchenService.updateOrderStatus(orderId, KitchenMealOrder.STATUS_PREPARING, "STAFF");
+            assertFalse(invalidTransition, "Transition out of terminal DELIVERED status should be rejected");
+
+            // Cancelled order transition also rejected
+            KitchenMealOrder order2 = kitchenService.createMealOrder(9993L, DietType.LIQUID, KitchenMealOrder.STATUS_CANCELLED, "NURSE");
+            boolean invalidFromCancelled = kitchenService.updateOrderStatus(order2.getOrderId(), KitchenMealOrder.STATUS_PREPARING, "STAFF");
+            assertFalse(invalidFromCancelled, "Transition out of terminal CANCELLED status should be rejected");
         }
     }
 }

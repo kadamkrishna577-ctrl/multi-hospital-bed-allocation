@@ -62,7 +62,7 @@ public class KitchenOrderDAO {
             "UPDATE " + TABLE + " SET status = ? WHERE order_id = ?";
 
     private static final String SQL_CANCEL_PENDING_FOR_PATIENT =
-            "UPDATE " + TABLE + " SET status = 'CANCELLED' WHERE patient_id = ? AND status = 'PENDING'";
+            "UPDATE " + TABLE + " SET status = 'CANCELLED' WHERE patient_id = ? AND status IN ('PENDING', 'PREPARING')";
 
     public KitchenOrderDAO() {}
 
@@ -306,7 +306,7 @@ public class KitchenOrderDAO {
         // Cancel in-memory store orders as well
         int memCancelled = 0;
         for (KitchenMealOrder order : orderStore.values()) {
-            if (order.getPatientId() == patientId && order.isPending()) {
+            if (order.getPatientId() == patientId && (order.isPending() || KitchenMealOrder.STATUS_PREPARING.equalsIgnoreCase(order.getStatus()))) {
                 order.setStatus(KitchenMealOrder.STATUS_CANCELLED);
                 memCancelled++;
             }
