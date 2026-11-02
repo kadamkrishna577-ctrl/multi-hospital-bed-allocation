@@ -68,7 +68,7 @@ public class MainDashboardFrame extends JFrame {
     }
 
     public MainDashboardFrame(User user) {
-        super("Multi-Hospital Bed Allocation & Emergency Dispatch Network (Group 15)");
+        super("Multi-Hospital Bed Allocation & Emergency Dispatch Network ");
         this.currentUser = (user != null) ? user : new User("admin", "admin123", "Chief Administrator", UserRole.ADMIN, 1);
 
         // 1. Initialize DAOs
@@ -121,7 +121,7 @@ public class MainDashboardFrame extends JFrame {
         tabbedPane.setFont(new Font("SansSerif", Font.BOLD, 13));
 
         // Tab 1: Triage Registration & Bed Search (Saksham - P1)
-        tabbedPane.addTab("🏥 Triage & Allocation", new TriageRegistrationPanel());
+        tabbedPane.addTab("🏥  Triage & Allocation", new TriageRegistrationPanel());
 
         // Tab 2: Equipment Management & Maintenance (Krishna - P2)
         EquipmentManagementPanel equipmentPanel = new EquipmentManagementPanel(maintenanceService);
@@ -129,26 +129,26 @@ public class MainDashboardFrame extends JFrame {
 
         // Tab 3: Ambulance Terminal & Reservations (Siddhant - P4)
         AmbulanceTerminalPanel ambulancePanel = new AmbulanceTerminalPanel(ambulanceDAO, ambulanceDispatchService);
-        tabbedPane.addTab("🚑 Ambulance Terminal", ambulancePanel);
+        tabbedPane.addTab("🚑  Ambulance Terminal", ambulancePanel);
 
         // Tab 4: Sanitization Staff Terminal (Siddhant - P4)
         SanitizationStaffPanel sanitizationPanel = new SanitizationStaffPanel(sanitizationService);
-        tabbedPane.addTab("🧹 Sanitization Staff", sanitizationPanel);
+        tabbedPane.addTab("🧹  Sanitization Staff", sanitizationPanel);
 
         // Tab 5: Hospital Administration (Saksham - P1)
         if (currentUser.hasAdminPrivileges()) {
-            tabbedPane.addTab("⚙ Hospital Administration", new AdminDashboardPanel());
+            tabbedPane.addTab("⚙  Hospital Administration", new AdminDashboardPanel());
         }
 
         // Tab 6: Ward Adjacency & Infection Containment (Jatin - P3)
         IsolationControlPanel isolationPanel = new IsolationControlPanel(
                 isolationService, wardTopologyDAO, bedDAO, patientDAO);
-        tabbedPane.addTab("🛡️ Ward Isolation (P3)", isolationPanel);
+        tabbedPane.addTab("🛡️  Ward Isolation ", isolationPanel);
 
         // Tab 7: Auxiliary Billing & Kitchen Dispatch (Jatin - P3)
         BillingAndKitchenPanel billingKitchenPanel = new BillingAndKitchenPanel(
                 billingService, kitchenService);
-        tabbedPane.addTab("💳 Billing & Kitchen (P3)", billingKitchenPanel);
+        tabbedPane.addTab("💳  Billing & Kitchen ", billingKitchenPanel);
 
         // Listen for tab switching to trigger dynamic refresh
         tabbedPane.addChangeListener(e -> {
