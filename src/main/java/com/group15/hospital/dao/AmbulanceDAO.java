@@ -102,6 +102,11 @@ public class AmbulanceDAO {
             "hospital_name, ward_name, assigned_bed_id, reserved_at, expires_at, status, rerouted_from_hospital " +
             "FROM ambulance_reservations WHERE status = 'RESERVED_EN_ROUTE'";
 
+    private static final String SQL_FIND_ALL_RESERVATIONS =
+            "SELECT reservation_id, ambulance_id, ambulance_type, patient_name, patient_triage, required_equipment, " +
+            "hospital_name, ward_name, assigned_bed_id, reserved_at, expires_at, status, rerouted_from_hospital " +
+            "FROM ambulance_reservations ORDER BY reservation_id DESC";
+
     public AmbulanceDAO() {
         initDefaultFleet();
     }
@@ -424,6 +429,12 @@ public class AmbulanceDAO {
     public void confirmArrivalAtomic(long reservationId) {
         AmbulanceReservation res = findReservationById(reservationId)
                 .orElseThrow(() -> new IllegalArgumentException("Reservation #" + reservationId + " not found"));
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(res.getStatus())) {
+            throw new IllegalStateException("Reservation #" + reservationId + " has already arrived.");
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(res.getStatus())) {
+            throw new IllegalStateException("Reservation #" + reservationId + " has already expired.");
+        }
 
         long bedId = res.getAssignedBedId();
         ReentrantLock lock = bedLocks.computeIfAbsent(bedId, k -> new ReentrantLock());
@@ -450,6 +461,7 @@ public class AmbulanceDAO {
             simulatedBedStore.put(bedId, BedStatus.OCCUPIED);
             res.setStatus(AmbulanceReservation.STATUS_ARRIVED);
             reservationStore.put(reservationId, res);
+            updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());
             LOGGER.info("Confirmed patient arrival for reservation #" + reservationId + " into bed #" + bedId);
         } finally {
             lock.unlock();
@@ -523,6 +535,7 @@ public class AmbulanceDAO {
                     simulatedBedStore.put(bedId, BedStatus.VACANT);
                     res.setStatus(AmbulanceReservation.STATUS_EXPIRED);
                     reservationStore.put(res.getReservationId(), res);
+                    updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());
                     expired.add(res);
                     LOGGER.info("Expired reservation #" + res.getReservationId() + ", released bed #" + bedId);
                 } finally {
@@ -597,6 +610,30 @@ public class AmbulanceDAO {
                 .collect(Collectors.toList());
     }
 
+    /**
+     * Returns all reservations (in-flight holds, confirmed arrivals, expired, and rerouted).
+     */
+    public List<AmbulanceReservation> findAllReservations() {
+        List<AmbulanceReservation> list = new ArrayList<>();
+        try (Connection conn = db.getConnection();
+             PreparedStatement ps = conn.prepareStatement(SQL_FIND_ALL_RESERVATIONS);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                list.add(mapReservationRow(rs));
+            }
+            if (!list.isEmpty()) {
+                list.forEach(r -> reservationStore.put(r.getReservationId(), r));
+                return list;
+            }
+        } catch (SQLException e) {
+            LOGGER.log(Level.FINE, "MySQL unavailable for findAllReservations: " + e.getMessage());
+        }
+
+        return reservationStore.values().stream()
+                .sorted((a, b) -> Long.compare(b.getReservationId(), a.getReservationId()))
+                .collect(Collectors.toList());
+    }
+
     // ──────────────────────────── Row Mappers ─────────────────────────────
 
     private Ambulance mapAmbulanceRow(ResultSet rs) throws SQLException {
@@ -651,3 +688,5 @@ public class AmbulanceDAO {
         return set;
     }
 }
+
+

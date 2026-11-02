@@ -2,6 +2,7 @@ package com.group15.hospital.ui.operations;
 
 import com.group15.hospital.exception.IllegalBedStateException;
 import com.group15.hospital.model.enums.BedStatus;
+import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.state.BedState;
 import com.group15.hospital.service.dispatch.SanitizationService;
 
@@ -236,6 +237,8 @@ public class SanitizationStaffPanel extends JPanel {
             staffName = "Cleaning Staff (Janitorial)";
         }
 
+        int cleanedCount = 0;
+
         // Loop over selected beds (supports U6 Alt Flow 2: several rooms marked clean one after another)
         for (int row : selectedRows) {
             long bedId = (Long) dirtyTableModel.getValueAt(row, 0);
@@ -265,6 +268,7 @@ public class SanitizationStaffPanel extends JPanel {
 
                 // Remove from dirty registry
                 dirtyBedRegistry.remove(bedId);
+                cleanedCount++;
 
                 BedStatus finalStatus = BedStatus.VACANT;
                 if (sanitizationService.getBedDAO() != null) {
@@ -299,8 +303,10 @@ public class SanitizationStaffPanel extends JPanel {
         }
 
         refreshTable();
-        JOptionPane.showMessageDialog(this, "Selected rooms sanitized! Pop-up notifications broadcast to triage screens in < 0.5s.",
-                "Sanitization Complete", JOptionPane.INFORMATION_MESSAGE);
+        if (cleanedCount > 0) {
+            JOptionPane.showMessageDialog(this, "Selected rooms sanitized! Pop-up notifications broadcast to triage screens in < 0.5s.",
+                    "Sanitization Complete", JOptionPane.INFORMATION_MESSAGE);
+        }
     }
 
     private void handleSimulateDirtyBed() {
@@ -312,6 +318,7 @@ public class SanitizationStaffPanel extends JPanel {
 
         String ward = "ICU";
         addDirtyBed(newBedId, selectedHospital, ward);
+        sanitizationService.seedWaitlistPatient(selectedHospital, "Vikram Seth", TriageLevel.LEVEL_1);
         refreshTable();
 
         JOptionPane.showMessageDialog(this,
@@ -329,8 +336,8 @@ public class SanitizationStaffPanel extends JPanel {
                 bedId,
                 BedState.fromStatus(BedStatus.REQUIRES_SANITIZATION),
                 hospitalName,
-                wardName
-        );
+                wardName);
+        refreshTable();
     }
 
     public void refreshTable() {
@@ -367,6 +374,7 @@ public class SanitizationStaffPanel extends JPanel {
         addDirtyBed(402L, "City Central Hospital", "Emergency Ward");
         addDirtyBed(403L, "Memorial Care Hospital", "ICU");
         addDirtyBed(404L, "Metro General Hospital", "General Ward");
+        sanitizationService.seedWaitlistPatient("City Central Hospital", "Vikram Seth", TriageLevel.LEVEL_1);
     }
 
     public DefaultTableModel getDirtyTableModel() {
@@ -376,4 +384,56 @@ public class SanitizationStaffPanel extends JPanel {
     public JTable getDirtyTable() {
         return dirtyTable;
     }
+
+    public DefaultTableModel getLogTableModel() {
+        return logTableModel;
+    }
+
+    public void removeDirtyBed(long bedId) {
+        dirtyBedRegistry.remove(bedId);
+        refreshTable();
+    }
+
+    public boolean performSanitization(long bedId, String staffName) {
+        DirtyBedRecord r = dirtyBedRegistry.get(bedId);
+        if (r == null) {
+            sanitizationService.markRoomSanitized(bedId, staffName);
+            return true;
+        }
+        long start = System.currentTimeMillis();
+        sanitizationService.markRoomSanitized(bedId, staffName, r.hospitalName, r.wardName);
+        long elapsed = System.currentTimeMillis() - start;
+        dirtyBedRegistry.remove(bedId);
+
+        BedStatus finalStatus = BedStatus.VACANT;
+        if (sanitizationService.getBedDAO() != null) {
+            BaseBed b = sanitizationService.getBedDAO().findById(bedId);
+            if (b != null) {
+                finalStatus = b.getStatus();
+            }
+        }
+        String transitionLabel = (finalStatus == BedStatus.RESTRICTED_BUFFER)
+                ? "RESTRICTED_BUFFER [Isolation Buffer Lock]"
+                : "VACANT";
+
+        logTableModel.insertRow(0, new Object[]{
+                LocalDateTime.now().format(TIME_FMT),
+                bedId,
+                r.hospitalName,
+                r.wardName,
+                staffName,
+                String.format("REQUIRES_SANITIZATION -> %s (%d ms)", transitionLabel, elapsed)
+        });
+        refreshTable();
+        return true;
+    }
+    public JComboBox<String> getHospitalFilterCombo() {
+        return hospitalFilterCombo;
+    }
+
+    public void triggerMarkSelectedClean() {
+        handleMarkSelectedClean();
+    }
 }
+
+
