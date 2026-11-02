@@ -158,25 +158,4 @@ To run the test that checks equipment decorators, waitlist priority, and 50 nurs
 ```bash
 mvn test-compile exec:java -Dexec.mainClass="com.group15.hospital.ConcurrencyAndDecoratorTest" -Dexec.classpathScope="test"
 ```
-
 ---
-
-## 🌿 Daily GitHub Steps for Our Team
-
-1. **Get the latest team code before you start:**
-   ```bash
-   git checkout develop
-   git pull origin develop
-   ```
-2. **Switch to your own branch:**
-   * Saksham: `git checkout feat/saksham-u1-u8-hierarchy-strategy`
-   * Krishna: `git checkout feat/krishna-u2-u3-decorator-preemption`
-   * Jatin: `git checkout feat/jatin-u4-u7-isolation-billing`
-   * Siddhant: `git checkout feat/siddhant-u5-u6-state-ambulance`
-3. **Save and upload your changes:**
-   ```bash
-   git add .
-   git commit -m "describe what you added"
-   git push origin <your-branch-name>
-   ```
-4. Go to GitHub and click **Compare & pull request** to merge your work into `develop`.
