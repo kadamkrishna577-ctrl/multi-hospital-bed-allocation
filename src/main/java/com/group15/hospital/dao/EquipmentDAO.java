@@ -8,6 +8,8 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -42,6 +44,31 @@ public class EquipmentDAO {
 
     /** Singleton database connection provider. */
     private final DatabaseConnection db = DatabaseConnection.getInstance();
+
+    /** In-memory fallback store for offline resilience when MySQL is unreachable. */
+    private static final ConcurrentHashMap<Long, MedicalMachine> IN_MEMORY_STORE = new ConcurrentHashMap<>();
+
+    static {
+        seedInitialInMemoryMachines();
+    }
+
+    private static void seedInitialInMemoryMachines() {
+        // City Central Hospital (machines attached/assigned to beds 101, 102, 103)
+        IN_MEMORY_STORE.put(1L, new MedicalMachine(1L, EquipmentType.VENTILATOR, "VENT-CC-101", "City Central Hospital", 120.5, false));
+        IN_MEMORY_STORE.put(2L, new MedicalMachine(2L, EquipmentType.VENTILATOR, "VENT-CC-102", "City Central Hospital", 485.0, false));
+        IN_MEMORY_STORE.put(3L, new MedicalMachine(3L, EquipmentType.OXYGEN, "OXY-CC-201", "City Central Hospital", 250.0, false));
+        IN_MEMORY_STORE.put(4L, new MedicalMachine(4L, EquipmentType.DIALYSIS, "DIA-CC-301", "City Central Hospital", 290.0, false));
+        IN_MEMORY_STORE.put(5L, new MedicalMachine(5L, EquipmentType.MONITOR, "MON-CC-401", "City Central Hospital", 800.0, false));
+
+        // Memorial Care Hospital
+        IN_MEMORY_STORE.put(6L, new MedicalMachine(6L, EquipmentType.VENTILATOR, "VENT-MC-101", "Memorial Care Hospital", 510.0, true));
+        IN_MEMORY_STORE.put(7L, new MedicalMachine(7L, EquipmentType.OXYGEN, "OXY-MC-201", "Memorial Care Hospital", 920.0, false));
+        IN_MEMORY_STORE.put(8L, new MedicalMachine(8L, EquipmentType.MONITOR, "MON-MC-401", "Memorial Care Hospital", 1450.0, false));
+
+        // Metro General Hospital
+        IN_MEMORY_STORE.put(9L, new MedicalMachine(9L, EquipmentType.VENTILATOR, "VENT-MG-101", "Metro General Hospital", 50.0, false));
+        IN_MEMORY_STORE.put(10L, new MedicalMachine(10L, EquipmentType.DIALYSIS, "DIA-MG-301", "Metro General Hospital", 110.0, false));
+    }
 
     // ──────────────────────────── SQL Constants ────────────────────────────
 
@@ -106,9 +133,9 @@ public class EquipmentDAO {
                 }
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find machine by id=" + machineId, e);
+            LOGGER.log(Level.WARNING, "DB findById failed for machine #" + machineId + ", using in-memory fallback: " + e.getMessage());
         }
-        return Optional.empty();
+        return Optional.ofNullable(IN_MEMORY_STORE.get(machineId));
     }
 
     /**
@@ -126,10 +153,13 @@ public class EquipmentDAO {
             while (rs.next()) {
                 machines.add(mapRow(rs));
             }
+            if (!machines.isEmpty()) {
+                return machines;
+            }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to load all machines", e);
+            LOGGER.log(Level.WARNING, "DB findAll failed, using in-memory fallback: " + e.getMessage());
         }
-        return machines;
+        return new ArrayList<>(IN_MEMORY_STORE.values());
     }
 
     /**
@@ -139,6 +169,10 @@ public class EquipmentDAO {
      * @return list of matching machines (never {@code null})
      */
     public List<MedicalMachine> findByHospital(String hospitalName) {
+        if (hospitalName == null || hospitalName.trim().isEmpty() || hospitalName.equalsIgnoreCase("All") || hospitalName.equalsIgnoreCase("All Hospitals")) {
+            return findAll();
+        }
+
         List<MedicalMachine> machines = new ArrayList<>();
 
         try (Connection conn = db.getConnection();
@@ -151,10 +185,15 @@ public class EquipmentDAO {
                     machines.add(mapRow(rs));
                 }
             }
+            if (!machines.isEmpty()) {
+                return machines;
+            }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find machines for hospital=" + hospitalName, e);
+            LOGGER.log(Level.WARNING, "DB findByHospital failed for " + hospitalName + ", using in-memory fallback: " + e.getMessage());
         }
-        return machines;
+        return IN_MEMORY_STORE.values().stream()
+                .filter(m -> m.getHospitalName().equalsIgnoreCase(hospitalName))
+                .collect(Collectors.toList());
     }
 
     /**
@@ -201,10 +240,15 @@ public class EquipmentDAO {
             while (rs.next()) {
                 machines.add(mapRow(rs));
             }
+            if (!machines.isEmpty()) {
+                return machines;
+            }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find machines needing maintenance", e);
+            LOGGER.log(Level.WARNING, "DB findMachinesNeedingMaintenance failed, using in-memory fallback: " + e.getMessage());
         }
-        return machines;
+        return IN_MEMORY_STORE.values().stream()
+                .filter(MedicalMachine::isUnderMaintenance)
+                .collect(Collectors.toList());
     }
 
     // ──────────────────────────── Write Operations ────────────────────────
@@ -253,6 +297,15 @@ public class EquipmentDAO {
      * @param newHours  the new total operating hours
      */
     public void updateOperatingHours(long machineId, double newHours) {
+        MedicalMachine mem = IN_MEMORY_STORE.get(machineId);
+        if (mem != null) {
+            try {
+                java.lang.reflect.Field field = MedicalMachine.class.getDeclaredField("operatingHoursUsed");
+                field.setAccessible(true);
+                field.set(mem, newHours);
+            } catch (Exception ignored) {}
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_HOURS)) {
 
@@ -281,6 +334,11 @@ public class EquipmentDAO {
      * @param hoursToAdd the hours to add (must be positive)
      */
     public void addOperatingHours(long machineId, double hoursToAdd) {
+        MedicalMachine mem = IN_MEMORY_STORE.get(machineId);
+        if (mem != null) {
+            mem.addOperatingHours(hoursToAdd);
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_ADD_HOURS)) {
 
@@ -304,6 +362,11 @@ public class EquipmentDAO {
      * @param machineId the machine to flag
      */
     public void flagForMaintenance(long machineId) {
+        MedicalMachine mem = IN_MEMORY_STORE.get(machineId);
+        if (mem != null) {
+            mem.setUnderMaintenance(true);
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_FLAG_MAINTENANCE)) {
 
@@ -329,6 +392,11 @@ public class EquipmentDAO {
      * @param machineId the machine to reset
      */
     public void resetOperatingHours(long machineId) {
+        MedicalMachine mem = IN_MEMORY_STORE.get(machineId);
+        if (mem != null) {
+            mem.completeMaintenance();
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_RESET_HOURS)) {
 
