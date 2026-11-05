@@ -311,6 +311,9 @@ public class EquipmentMaintenanceService {
      * @return list of machines (never {@code null})
      */
     public List<MedicalMachine> getEquipmentStatus(String hospitalName) {
+        if (hospitalName == null || hospitalName.trim().isEmpty() || hospitalName.equalsIgnoreCase("All") || hospitalName.equalsIgnoreCase("All Hospitals")) {
+            return equipmentDAO.findAll();
+        }
         return equipmentDAO.findByHospital(hospitalName);
     }
 
