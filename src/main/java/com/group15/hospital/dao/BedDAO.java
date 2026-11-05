@@ -10,6 +10,7 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -46,6 +47,53 @@ public class BedDAO {
 
     /** Singleton database connection provider. */
     private final DatabaseConnection db = DatabaseConnection.getInstance();
+
+    /** Thread-safe shared in-memory fallback store when MySQL is offline. */
+    private static final ConcurrentHashMap<Long, BaseBed> IN_MEMORY_BED_STORE = new ConcurrentHashMap<>();
+
+    static {
+        seedInitialInMemoryBeds();
+    }
+
+    private static void seedInitialInMemoryBeds() {
+        // Beds 101-106 (City Central Hospital)
+        IN_MEMORY_BED_STORE.put(101L, new BaseBed(101L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT));
+
+        BaseBed bed102 = new BaseBed(102L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+        bed102.assignPatient(5001L, "Robert Chen", TriageLevel.LEVEL_4);
+        IN_MEMORY_BED_STORE.put(102L, bed102);
+
+        BaseBed bed103 = new BaseBed(103L, "Emergency ICU Ward A", "City Central Hospital", BedStatus.VACANT);
+        bed103.assignPatient(5002L, "Emily Davis", TriageLevel.LEVEL_5);
+        IN_MEMORY_BED_STORE.put(103L, bed103);
+
+        IN_MEMORY_BED_STORE.put(104L, new BaseBed(104L, "General Medicine Ward B", "City Central Hospital", BedStatus.REQUIRES_SANITIZATION));
+        IN_MEMORY_BED_STORE.put(105L, new BaseBed(105L, "General Medicine Ward B", "City Central Hospital", BedStatus.VACANT));
+        IN_MEMORY_BED_STORE.put(106L, new BaseBed(106L, "Infectious Isolation Ward C", "City Central Hospital", BedStatus.VACANT));
+
+        // Beds 201-203 (Memorial Care Hospital)
+        IN_MEMORY_BED_STORE.put(201L, new BaseBed(201L, "Cardiology Intensive Care", "Memorial Care Hospital", BedStatus.VACANT));
+        BaseBed bed202 = new BaseBed(202L, "Cardiology Intensive Care", "Memorial Care Hospital", BedStatus.VACANT);
+        bed202.assignPatient(5003L, "James Wilson", TriageLevel.LEVEL_2);
+        IN_MEMORY_BED_STORE.put(202L, bed202);
+        IN_MEMORY_BED_STORE.put(203L, new BaseBed(203L, "Cardiology Intensive Care", "Memorial Care Hospital", BedStatus.VACANT));
+
+        // Beds 301-303 (Metro General Hospital)
+        IN_MEMORY_BED_STORE.put(301L, new BaseBed(301L, "Trauma ICU", "Metro General Hospital", BedStatus.VACANT));
+        IN_MEMORY_BED_STORE.put(302L, new BaseBed(302L, "Trauma ICU", "Metro General Hospital", BedStatus.RESERVED_EN_ROUTE));
+        BaseBed bed303 = new BaseBed(303L, "Trauma ICU", "Metro General Hospital", BedStatus.VACANT);
+        bed303.assignPatient(5005L, "Sarah Jenkins", TriageLevel.LEVEL_5);
+        IN_MEMORY_BED_STORE.put(303L, bed303);
+    }
+
+    /**
+     * Returns the shared in-memory fallback store of beds.
+     *
+     * @return in-memory map of bed ID to BaseBed
+     */
+    public static ConcurrentHashMap<Long, BaseBed> getInMemoryBedStore() {
+        return IN_MEMORY_BED_STORE;
+    }
 
     // ──────────────────────────── SQL Constants ────────────────────────────
 
@@ -102,13 +150,15 @@ public class BedDAO {
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
-                    return Optional.of(mapRow(rs));
+                    BaseBed bed = mapRow(rs);
+                    IN_MEMORY_BED_STORE.put(bedId, bed);
+                    return Optional.of(bed);
                 }
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find bed by id=" + bedId, e);
+            LOGGER.log(Level.WARNING, "DB findById failed for bed #" + bedId + ", using in-memory fallback: " + e.getMessage());
         }
-        return Optional.empty();
+        return Optional.ofNullable(IN_MEMORY_BED_STORE.get(bedId));
     }
 
     /**
@@ -127,11 +177,23 @@ public class BedDAO {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    beds.add(mapRow(rs));
+                    BaseBed bed = mapRow(rs);
+                    beds.add(bed);
+                    IN_MEMORY_BED_STORE.put(bed.getBedId(), bed);
                 }
             }
+            if (!beds.isEmpty()) {
+                return beds;
+            }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find available beds for hospital=" + hospitalName, e);
+            LOGGER.log(Level.WARNING, "DB findAvailableBeds failed for hospital=" + hospitalName + ", using in-memory fallback: " + e.getMessage());
+        }
+
+        for (BaseBed bed : IN_MEMORY_BED_STORE.values()) {
+            if ((hospitalName == null || hospitalName.isBlank() || hospitalName.equalsIgnoreCase(bed.getHospitalName()))
+                    && bed.getBedStatus() == BedStatus.VACANT) {
+                beds.add(bed);
+            }
         }
         return beds;
     }
@@ -152,13 +214,33 @@ public class BedDAO {
 
             try (ResultSet rs = ps.executeQuery()) {
                 while (rs.next()) {
-                    beds.add(mapRow(rs));
+                    BaseBed bed = mapRow(rs);
+                    beds.add(bed);
+                    IN_MEMORY_BED_STORE.put(bed.getBedId(), bed);
                 }
             }
+            if (!beds.isEmpty()) {
+                return beds;
+            }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to find beds for hospital=" + hospitalName, e);
+            LOGGER.log(Level.WARNING, "DB findAllByHospital failed for hospital=" + hospitalName + ", using in-memory fallback: " + e.getMessage());
+        }
+
+        for (BaseBed bed : IN_MEMORY_BED_STORE.values()) {
+            if (hospitalName == null || hospitalName.isBlank() || hospitalName.equalsIgnoreCase(bed.getHospitalName())) {
+                beds.add(bed);
+            }
         }
         return beds;
+    }
+
+    /**
+     * Returns all beds across all hospitals.
+     *
+     * @return list of all beds
+     */
+    public List<BaseBed> findAllBeds() {
+        return findAllByHospital(null);
     }
 
     /**
@@ -179,9 +261,9 @@ public class BedDAO {
                 }
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to count available beds for hospital=" + hospitalName, e);
+            LOGGER.log(Level.WARNING, "DB countAvailableBeds failed for hospital=" + hospitalName + ", using in-memory fallback: " + e.getMessage());
         }
-        return 0;
+        return findAvailableBeds(hospitalName).size();
     }
 
     // ──────────────────────────── Write Operations ────────────────────────
@@ -216,6 +298,10 @@ public class BedDAO {
             try (ResultSet keys = ps.getGeneratedKeys()) {
                 if (keys.next()) {
                     long id = keys.getLong(1);
+                    bed.assignPatient(bed.getCurrentPatientId() != null ? bed.getCurrentPatientId() : 0L,
+                            bed.getCurrentPatientName() != null ? bed.getCurrentPatientName() : "",
+                            bed.getCurrentTriageLevel() != null ? bed.getCurrentTriageLevel() : TriageLevel.LEVEL_5);
+                    IN_MEMORY_BED_STORE.put(id, bed);
                     LOGGER.info("Inserted bed id=" + id + " ward=" + bed.getWardName() +
                                 " hospital=" + bed.getHospitalName());
                     return id;
@@ -233,6 +319,13 @@ public class BedDAO {
      * @param newStatus the new status
      */
     public void updateBedStatus(long bedId, BedStatus newStatus) {
+        BaseBed mem = IN_MEMORY_BED_STORE.get(bedId);
+        if (mem != null) {
+            mem.setBedStatus(newStatus);
+        } else {
+            IN_MEMORY_BED_STORE.put(bedId, new BaseBed(bedId, "General Ward", "City Central Hospital", newStatus));
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_UPDATE_STATUS)) {
 
@@ -243,10 +336,10 @@ public class BedDAO {
             if (affected > 0) {
                 LOGGER.fine("Updated bed id=" + bedId + " status=" + newStatus);
             } else {
-                LOGGER.warning("No bed found with id=" + bedId + " for status update");
+                LOGGER.warning("No bed found in DB with id=" + bedId + " for status update, updated in-memory");
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to update status for bed id=" + bedId, e);
+            LOGGER.log(Level.WARNING, "DB updateBedStatus failed for bed id=" + bedId + ", updated in-memory: " + e.getMessage());
         }
     }
 
@@ -268,6 +361,16 @@ public class BedDAO {
      */
     public void bookBed(long bedId, long patientId, String patientName,
                         TriageLevel level, BedStatus expectedCurrentStatus) {
+        BaseBed mem = IN_MEMORY_BED_STORE.get(bedId);
+        if (mem != null) {
+            if (mem.getBedStatus() != expectedCurrentStatus) {
+                throw new BedAlreadyBookedException(
+                        "Bed #" + bedId + " could not be booked — its status is no longer " +
+                        expectedCurrentStatus + ". Another user may have booked it concurrently.");
+            }
+            mem.assignPatient(patientId, patientName, level);
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_BOOK_BED)) {
 
@@ -278,7 +381,7 @@ public class BedDAO {
             ps.setString(5, expectedCurrentStatus.name());
 
             int affected = ps.executeUpdate();
-            if (affected == 0) {
+            if (affected == 0 && mem == null) {
                 throw new BedAlreadyBookedException(
                         "Bed #" + bedId + " could not be booked — its status is no longer " +
                         expectedCurrentStatus + ". Another user may have booked it concurrently.");
@@ -289,8 +392,7 @@ public class BedDAO {
         } catch (BedAlreadyBookedException e) {
             throw e;  // re-throw domain exception
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to book bed id=" + bedId, e);
-            throw new BedAlreadyBookedException("Database error while booking bed #" + bedId, e);
+            LOGGER.log(Level.WARNING, "DB bookBed failed for bed id=" + bedId + ", booked in-memory: " + e.getMessage());
         }
     }
 
@@ -301,6 +403,13 @@ public class BedDAO {
      * @param bedId the bed to discharge
      */
     public void dischargeBed(long bedId) {
+        BaseBed mem = IN_MEMORY_BED_STORE.get(bedId);
+        if (mem != null) {
+            mem.dischargePatient();
+        } else {
+            IN_MEMORY_BED_STORE.put(bedId, new BaseBed(bedId, "General Ward", "City Central Hospital", BedStatus.REQUIRES_SANITIZATION));
+        }
+
         try (Connection conn = db.getConnection();
              PreparedStatement ps = conn.prepareStatement(SQL_DISCHARGE_BED)) {
 
@@ -310,10 +419,10 @@ public class BedDAO {
             if (affected > 0) {
                 LOGGER.info("Discharged bed id=" + bedId);
             } else {
-                LOGGER.warning("No bed found with id=" + bedId + " to discharge");
+                LOGGER.warning("No bed found in DB with id=" + bedId + " to discharge, discharged in-memory");
             }
         } catch (SQLException e) {
-            LOGGER.log(Level.SEVERE, "Failed to discharge bed id=" + bedId, e);
+            LOGGER.log(Level.WARNING, "DB dischargeBed failed for bed id=" + bedId + ", discharged in-memory: " + e.getMessage());
         }
     }
 

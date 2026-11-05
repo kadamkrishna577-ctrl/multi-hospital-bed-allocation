@@ -1,16 +1,22 @@
 package com.group15.hospital.service.dispatch;
 
 import com.group15.hospital.dao.AlertDAO;
+import com.group15.hospital.dao.BedDAO;
 import com.group15.hospital.exception.IllegalBedStateException;
 import com.group15.hospital.model.ambulance.SystemAlert;
+import com.group15.hospital.model.bed.BaseBed;
 import com.group15.hospital.model.bed.WaitlistEntry;
 import com.group15.hospital.model.enums.BedStatus;
+import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.enums.UserRole;
 import com.group15.hospital.model.state.BedState;
+import com.group15.hospital.model.state.RestrictedBufferState;
+import com.group15.hospital.service.containment.IsolationContainmentService;
 import com.group15.hospital.service.preemption.WaitlistManager;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -42,6 +48,8 @@ public class SanitizationService {
     private final AlertDAO alertDAO;
     private final AlertNotificationManager notificationManager;
     private final WaitlistManager waitlistManager;
+    private BedDAO bedDAO = new BedDAO();
+    private IsolationContainmentService isolationService;
 
     /**
      * In-memory bed state store (mirrors BedDAO for offline operation and test isolation).
@@ -76,6 +84,22 @@ public class SanitizationService {
         this.waitlistManager = Objects.requireNonNull(waitlistManager, "waitlistManager must not be null");
     }
 
+    public BedDAO getBedDAO() {
+        return bedDAO;
+    }
+
+    public void setBedDAO(BedDAO bedDAO) {
+        this.bedDAO = bedDAO;
+    }
+
+    public IsolationContainmentService getIsolationContainmentService() {
+        return isolationService;
+    }
+
+    public void setIsolationContainmentService(IsolationContainmentService isolationService) {
+        this.isolationService = isolationService;
+    }
+
     // ──────────────────── Bed Registration ──────────────────────────────
 
     /**
@@ -107,6 +131,24 @@ public class SanitizationService {
     }
 
     /**
+     * Seeds a waiting patient in the WaitlistManager for waitlist matching demonstrations (U6 Alt Flow 1).
+     */
+    public void seedWaitlistPatient(String hospitalName, String patientName, TriageLevel triage) {
+        String hosp = (hospitalName != null && !hospitalName.isBlank()) ? hospitalName : "City Central Hospital";
+        String name = (patientName != null && !patientName.isBlank()) ? patientName : "Vikram Seth";
+        TriageLevel level = (triage != null) ? triage : TriageLevel.LEVEL_1;
+        WaitlistEntry entry = new WaitlistEntry(
+                888L,
+                name,
+                level,
+                hosp,
+                "ICU",
+                "Awaiting ICU bed allocation"
+        );
+        waitlistManager.addToWaitlist(entry);
+    }
+
+    /**
      * Returns the current {@link BedStatus} of a bed from the in-memory store.
      */
     public BedStatus getCurrentBedStatus(long bedId) {
@@ -133,8 +175,16 @@ public class SanitizationService {
     public void markRoomSanitized(long bedId, String staffName) {
         String staff = (staffName != null && !staffName.isBlank()) ? staffName : "Unknown Staff";
 
-        // 1. Retrieve current bed state
+        // 1. Retrieve current bed state from memory or BedDAO
         BedState currentState = bedStateStore.get(bedId);
+        if (currentState == null && bedDAO != null) {
+            Optional<BaseBed> bOpt = bedDAO.findById(bedId);
+            if (bOpt.isPresent()) {
+                currentState = BedState.fromStatus(bOpt.get().getBedStatus());
+                bedHospitalIndex.putIfAbsent(bedId, bOpt.get().getHospitalName());
+                bedWardIndex.putIfAbsent(bedId, bOpt.get().getWardName());
+            }
+        }
         if (currentState == null) {
             // Fall back: treat as REQUIRES_SANITIZATION if unknown (safe assumption for cleaning flow)
             currentState = BedState.fromStatus(BedStatus.REQUIRES_SANITIZATION);
@@ -156,8 +206,35 @@ public class SanitizationService {
             throw e;
         }
 
-        // 3. Persist updated state in memory (and in production, via BedDAO.updateBedStatus)
+        // Sanitization-to-Isolation Re-evaluation Hook (Requirement 2)
+        boolean exposedToActiveIsolation = (isolationService != null && isolationService.isBedExposedToActiveIsolation(bedId));
+        if (exposedToActiveIsolation) {
+            // Automatically lock the newly sanitized bed into RESTRICTED_BUFFER instead of VACANT
+            newState = new RestrictedBufferState();
+            bedStateStore.put(bedId, newState);
+            if (bedDAO != null) {
+                bedDAO.updateBedStatus(bedId, BedStatus.RESTRICTED_BUFFER);
+            }
+            LOGGER.info(String.format("[Sanitization] Bed #%d sanitized by '%s' but auto-locked to RESTRICTED_BUFFER (infection zone).",
+                    bedId, staff));
+
+            SystemAlert bufferAlert = new SystemAlert(
+                    SystemAlert.TYPE_BED_CLEANED,
+                    UserRole.NURSE,
+                    hospitalName,
+                    bedId,
+                    String.format("[ISO] Bed #%d in %s / %s was sanitized but auto-locked to RESTRICTED_BUFFER (adjacent to active isolation). Staff: %s",
+                            bedId, hospitalName, wardName, staff)
+            );
+            notificationManager.broadcastAlert(bufferAlert);
+            return;
+        }
+
+        // 3. Persist updated state in memory (and via BedDAO.updateBedStatus)
         bedStateStore.put(bedId, newState);
+        if (bedDAO != null) {
+            bedDAO.updateBedStatus(bedId, BedStatus.VACANT);
+        }
         LOGGER.info("[Sanitization] Bed #" + bedId + " sanitized by '" + staff
                 + "': " + currentState.getStatus() + " → " + newState.getStatus());
 

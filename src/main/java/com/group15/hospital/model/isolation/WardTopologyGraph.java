@@ -45,7 +45,7 @@ public class WardTopologyGraph {
      */
     public void addEdge(long bed1, long bed2, String relationshipType) {
         if (bed1 == bed2) {
-            return; // A bed cannot be connected to itself
+            throw new IllegalArgumentException("Self-loops are not allowed: Bed #" + bed1 + " cannot connect to itself.");
         }
 
         String type = (relationshipType != null) ? relationshipType.trim().toUpperCase() : RELATION_NEIGHBOR;

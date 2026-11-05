@@ -71,6 +71,9 @@ public class AmbulanceTerminalPanel extends JPanel {
         // Start 1-second countdown refresh timer
         startCountdownTimer();
 
+        // Seed default demo beds across network hospitals for immediate out-of-the-box reservations
+        seedDemoBedsAndFleet();
+
         // Load initial data
         refreshAmbulanceDropdown();
         refreshReservationsTable();
@@ -304,6 +307,7 @@ public class AmbulanceTerminalPanel extends JPanel {
 
         String ambulanceId = selectedAmbStr.split(" ")[0].trim();
         String patientName = patientNameField.getText().trim();
+        if (patientName.isBlank()) { patientName = "Emergency Patient (Unidentified)"; }
         TriageLevel triage = (TriageLevel) triageCombo.getSelectedItem();
         String hospital = (String) hospitalCombo.getSelectedItem();
 
@@ -364,10 +368,21 @@ public class AmbulanceTerminalPanel extends JPanel {
         }
 
         long resId = (Long) tableModel.getValueAt(row, 0);
+        String currentStatus = String.valueOf(tableModel.getValueAt(row, 9));
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This patient has already arrived and been admitted to bed.", "Already Admitted", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Cannot admit patient.", "Reservation Expired", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
         try {
             ambulanceDAO.confirmArrivalAtomic(resId);
             JOptionPane.showMessageDialog(this, "Patient arrival confirmed! Bed status transitioned to OCCUPIED.", "Patient Admitted", JOptionPane.INFORMATION_MESSAGE);
             refreshReservationsTable();
+            refreshAmbulanceDropdown();
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this, "Error confirming arrival: " + e.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
@@ -381,6 +396,16 @@ public class AmbulanceTerminalPanel extends JPanel {
         }
 
         long resId = (Long) tableModel.getValueAt(row, 0);
+        String currentStatus = String.valueOf(tableModel.getValueAt(row, 9));
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "Patient has already arrived. ETA extension not applicable.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Hold window cannot be extended.", "Notice", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+
         boolean extended = ambulanceDAO.extendReservationWindow(resId, 5);
         if (extended) {
             JOptionPane.showMessageDialog(this, "Hold window extended by +5 minutes (U5 Alt Flow 2).", "Window Extended", JOptionPane.INFORMATION_MESSAGE);
@@ -398,6 +423,15 @@ public class AmbulanceTerminalPanel extends JPanel {
         }
 
         long resId = (Long) tableModel.getValueAt(row, 0);
+        String currentStatus = String.valueOf(tableModel.getValueAt(row, 9));
+        if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This patient has already arrived and been admitted to their bed (cannot reroute).", "Patient Admitted", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        if (AmbulanceReservation.STATUS_EXPIRED.equalsIgnoreCase(currentStatus)) {
+            JOptionPane.showMessageDialog(this, "This reservation has expired. Cannot reroute an inactive reservation.", "Reservation Expired", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
         try {
             long start = System.currentTimeMillis();
             AmbulanceReservation rerouted = dispatchService.checkAndRerouteIfFull(resId, true);
@@ -425,23 +459,28 @@ public class AmbulanceTerminalPanel extends JPanel {
 
     private void updateCountdownValues() {
         LocalDateTime now = LocalDateTime.now();
-        List<AmbulanceReservation> list = ambulanceDAO.findAllActiveReservations();
+        List<AmbulanceReservation> list = ambulanceDAO.findAllReservations();
 
-        // Update countdown column (index 8) for each row
+        // Update countdown column (index 8) and status (index 9) for each row
         for (int i = 0; i < tableModel.getRowCount(); i++) {
             long resId = (Long) tableModel.getValueAt(i, 0);
             for (AmbulanceReservation r : list) {
                 if (r.getReservationId() == resId) {
-                    long remainingSec = r.getRemainingSeconds(now);
-                    String timeStr;
-                    if (remainingSec <= 0) {
-                        timeStr = "EXPIRED (00:00)";
+                    if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(r.getStatus())) {
+                        tableModel.setValueAt("ARRIVED / ADMITTED", i, 8);
                     } else {
-                        long mins = remainingSec / 60;
-                        long secs = remainingSec % 60;
-                        timeStr = String.format("%02d:%02d remaining", mins, secs);
+                        long remainingSec = r.getRemainingSeconds(now);
+                        String timeStr;
+                        if (remainingSec <= 0) {
+                            timeStr = "EXPIRED (00:00)";
+                        } else {
+                            long mins = remainingSec / 60;
+                            long secs = remainingSec % 60;
+                            timeStr = String.format("%02d:%02d remaining", mins, secs);
+                        }
+                        tableModel.setValueAt(timeStr, i, 8);
                     }
-                    tableModel.setValueAt(timeStr, i, 8);
+                    tableModel.setValueAt(r.getStatus(), i, 9);
                     break;
                 }
             }
@@ -450,14 +489,19 @@ public class AmbulanceTerminalPanel extends JPanel {
 
     public void refreshReservationsTable() {
         tableModel.setRowCount(0);
-        List<AmbulanceReservation> reservations = ambulanceDAO.findAllActiveReservations();
+        List<AmbulanceReservation> reservations = ambulanceDAO.findAllReservations();
         LocalDateTime now = LocalDateTime.now();
 
         for (AmbulanceReservation r : reservations) {
-            long remSec = r.getRemainingSeconds(now);
-            long m = remSec / 60;
-            long s = remSec % 60;
-            String cd = (remSec <= 0) ? "EXPIRED" : String.format("%02d:%02d remaining", m, s);
+            String cd;
+            if (AmbulanceReservation.STATUS_ARRIVED.equalsIgnoreCase(r.getStatus())) {
+                cd = "ARRIVED / ADMITTED";
+            } else {
+                long remSec = r.getRemainingSeconds(now);
+                long m = remSec / 60;
+                long s = remSec % 60;
+                cd = (remSec <= 0) ? "EXPIRED" : String.format("%02d:%02d remaining", m, s);
+            }
 
             tableModel.addRow(new Object[]{
                     r.getReservationId(),
@@ -502,4 +546,19 @@ public class AmbulanceTerminalPanel extends JPanel {
     public JTable getReservationsTable() {
         return reservationsTable;
     }
+    public void triggerReservationSubmission() { handleReservationSubmission(); }
+    public void triggerConfirmArrival() { handleConfirmArrival(); }
+    public void triggerExtendWindow() { handleExtendWindow(); }
+    public void triggerSimulateReroute() { handleSimulateReroute(); }
+
+    public JComboBox<String> getAmbulanceCombo() { return ambulanceCombo; }
+    public JTextField getPatientNameField() { return patientNameField; }
+    public JComboBox<TriageLevel> getTriageCombo() { return triageCombo; }
+    public JCheckBox getVentBox() { return ventBox; }
+    public JCheckBox getOxyBox() { return oxyBox; }
+    public JCheckBox getDialBox() { return dialBox; }
+    public JCheckBox getMonBox() { return monBox; }
+    public JComboBox<String> getHospitalCombo() { return hospitalCombo; }
+    public JSpinner getEtaSpinner() { return etaSpinner; }
 }
+

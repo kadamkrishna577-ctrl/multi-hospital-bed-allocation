@@ -119,15 +119,19 @@ public class AlertDAO {
     public List<SystemAlert> fetchUnacknowledgedAlerts(String hospitalName, UserRole targetRole) {
         List<SystemAlert> list = new ArrayList<>();
 
-        try (Connection conn = db.getConnection();
-             PreparedStatement ps = conn.prepareStatement(SQL_FETCH_UNACKNOWLEDGED)) {
-
-            ps.setString(1, hospitalName);
-            ps.setString(2, targetRole.name());
-
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    list.add(mapAlertRow(rs));
+        try (Connection conn = db.getConnection()) {
+            String sql = (targetRole != null) ? SQL_FETCH_UNACKNOWLEDGED :
+                    "SELECT alert_id, alert_type, target_role, hospital_name, bed_id, message, created_at, is_acknowledged " +
+                    "FROM system_alerts WHERE hospital_name = ? AND is_acknowledged = FALSE ORDER BY created_at ASC";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, hospitalName);
+                if (targetRole != null) {
+                    ps.setString(2, targetRole.name());
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        list.add(mapAlertRow(rs));
+                    }
                 }
             }
             if (!list.isEmpty()) {
@@ -140,7 +144,7 @@ public class AlertDAO {
 
         return alertStore.values().stream()
                 .filter(a -> a.getHospitalName().equalsIgnoreCase(hospitalName))
-                .filter(a -> a.getTargetRole() == targetRole)
+                .filter(a -> targetRole == null || a.getTargetRole() == null || a.getTargetRole() == targetRole)
                 .filter(a -> !a.isAcknowledged())
                 .sorted(Comparator.comparing(SystemAlert::getTimestamp))
                 .collect(Collectors.toList());
