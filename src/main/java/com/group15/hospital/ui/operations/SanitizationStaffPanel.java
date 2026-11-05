@@ -407,9 +407,9 @@ public class SanitizationStaffPanel extends JPanel {
 
         BedStatus finalStatus = BedStatus.VACANT;
         if (sanitizationService.getBedDAO() != null) {
-            BaseBed b = sanitizationService.getBedDAO().findById(bedId);
-            if (b != null) {
-                finalStatus = b.getStatus();
+            Optional<com.group15.hospital.model.bed.BaseBed> bOpt = sanitizationService.getBedDAO().findById(bedId);
+            if (bOpt.isPresent()) {
+                finalStatus = bOpt.get().getBedStatus();
             }
         }
         String transitionLabel = (finalStatus == BedStatus.RESTRICTED_BUFFER)
