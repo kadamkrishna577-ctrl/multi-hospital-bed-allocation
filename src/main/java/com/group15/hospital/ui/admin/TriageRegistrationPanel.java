@@ -1,9 +1,14 @@
 package com.group15.hospital.ui.admin;
 
+import com.group15.hospital.dao.BedDAO;
 import com.group15.hospital.dao.PatientDAO;
+import com.group15.hospital.model.bed.BaseBed;
+import com.group15.hospital.model.bed.BedComponent;
+import com.group15.hospital.model.enums.BedStatus;
 import com.group15.hospital.model.enums.DietType;
 import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.hierarchy.Patient;
+import com.group15.hospital.service.containment.IsolationContainmentService;
 import com.group15.hospital.service.strategy.BedAllocationStrategy;
 import com.group15.hospital.service.strategy.BedSearchEngine;
 import com.group15.hospital.service.strategy.BestEquippedBedStrategy;
@@ -20,6 +25,16 @@ public class TriageRegistrationPanel extends JPanel {
 
     private final BedSearchEngine searchEngine;
     private final PatientDAO patientDAO;
+    private BedDAO bedDAO;
+    private IsolationContainmentService isolationService;
+
+    public void setBedDAO(BedDAO bedDAO) {
+        this.bedDAO = bedDAO;
+    }
+
+    public void setIsolationContainmentService(IsolationContainmentService isolationService) {
+        this.isolationService = isolationService;
+    }
 
     private JTextField nameField;
     private JTextField ageField;
@@ -191,6 +206,25 @@ public class TriageRegistrationPanel extends JPanel {
 
                 // 4. Save to database
                 patientDAO.save(patient);
+
+                // Synchronize BedDAO
+                if (bedDAO != null) {
+                    try {
+                        BaseBed memBed = BedDAO.getInMemoryBedStore().get(res.getBedId());
+                        if (memBed != null) {
+                            memBed.assignPatient(patient.getPatientId(), patient.getFullName(), patient.getTriageLevel());
+                        }
+                        bedDAO.updateBedStatus(res.getBedId(), BedStatus.OCCUPIED);
+                    } catch (Exception ignored) {}
+                }
+
+                // Notify IsolationContainmentService -> triggers BillingService & KitchenService observers
+                if (isolationService != null) {
+                    try {
+                        BedComponent targetBed = isolationService.getBed(res.getBedId());
+                        isolationService.admitPatient(patient, targetBed, false, "TRIAGE_ADMISSION");
+                    } catch (Exception ignored) {}
+                }
 
                 // 5. Update UI
                 String feedback = String.format(

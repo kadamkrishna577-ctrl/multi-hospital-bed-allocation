@@ -62,6 +62,7 @@ public class MainDashboardFrame extends JFrame {
     private final BillingService billingService;
     private final KitchenService kitchenService;
     private final IsolationContainmentService isolationService;
+    private final TriageAlertPopupHandler popupHandler;
 
     public MainDashboardFrame() {
         this(new User("admin", "admin123", "Chief Administrator", UserRole.ADMIN, 1));
@@ -87,7 +88,7 @@ public class MainDashboardFrame extends JFrame {
         this.preemptionService = new EmergencyPreemptionService(bedDAO, waitlistManager);
         this.maintenanceService = new EquipmentMaintenanceService(equipmentDAO);
         this.alertManager = AlertNotificationManager.getInstance(alertDAO);
-        this.ambulanceDispatchService = new AmbulanceDispatchService(ambulanceDAO, alertDAO, alertManager);
+        this.ambulanceDispatchService = new AmbulanceDispatchService(ambulanceDAO, alertDAO, alertManager, this.bedDAO);
         this.sanitizationService = new SanitizationService(alertDAO, alertManager, waitlistManager);
 
         // Phase 3 Auxiliary & Isolation Services (Jatin - P3)
@@ -104,9 +105,8 @@ public class MainDashboardFrame extends JFrame {
         this.sanitizationService.setBedDAO(this.bedDAO);
         this.sanitizationService.setIsolationContainmentService(this.isolationService);
 
-        // 3. Register Global Triage Alert Observer for Popups
-        TriageAlertPopupHandler popupHandler = new TriageAlertPopupHandler(alertDAO, this);
-        this.alertManager.registerObserver(popupHandler);
+        // 3. Register Global Triage Alert Observer for Popups (auto-registered by constructor)
+        this.popupHandler = new TriageAlertPopupHandler(alertDAO, this);
 
         // 4. Configure Window Layout
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -126,6 +126,8 @@ public class MainDashboardFrame extends JFrame {
 
         // Tab 1: Triage Registration & Bed Search (Saksham - P1)
         TriageRegistrationPanel triagePanel = new TriageRegistrationPanel();
+        triagePanel.setBedDAO(this.bedDAO);
+        triagePanel.setIsolationContainmentService(this.isolationService);
         tabbedPane.addTab("🏥 Triage & Allocation", triagePanel);
 
         // Tab 2: Equipment Management & Maintenance (Krishna - P2)
@@ -134,6 +136,9 @@ public class MainDashboardFrame extends JFrame {
 
         // Tab 3: Ambulance Terminal & Reservations (Siddhant - P4)
         AmbulanceTerminalPanel ambulancePanel = new AmbulanceTerminalPanel(ambulanceDAO, ambulanceDispatchService);
+        ambulancePanel.setBedDAO(this.bedDAO);
+        ambulancePanel.setPatientDAO(this.patientDAO);
+        ambulancePanel.setIsolationContainmentService(this.isolationService);
         tabbedPane.addTab("🚑 Ambulance Terminal", ambulancePanel);
 
         // Tab 4: Sanitization Staff Terminal (Siddhant - P4)
@@ -168,6 +173,9 @@ public class MainDashboardFrame extends JFrame {
                 equipmentPanel.refreshData();
             } else if (selected == triagePanel) {
                 triagePanel.refreshPatientTable();
+            } else if (selected == ambulancePanel) {
+                ambulancePanel.refreshReservationsTable();
+                ambulancePanel.refreshAmbulanceDropdown();
             }
         });
 
@@ -225,6 +233,9 @@ public class MainDashboardFrame extends JFrame {
         JButton logoutBtn = new JButton("Logout");
         logoutBtn.setFocusPainted(false);
         logoutBtn.addActionListener(e -> {
+            if (this.popupHandler != null) {
+                this.popupHandler.unregister();
+            }
             dispose();
             SwingUtilities.invokeLater(() -> new LoginFrame().setVisible(true));
         });

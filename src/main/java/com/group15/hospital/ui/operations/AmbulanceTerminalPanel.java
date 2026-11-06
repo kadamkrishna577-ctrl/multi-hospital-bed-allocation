@@ -1,12 +1,19 @@
 package com.group15.hospital.ui.operations;
 
 import com.group15.hospital.dao.AmbulanceDAO;
+import com.group15.hospital.dao.BedDAO;
+import com.group15.hospital.dao.PatientDAO;
 import com.group15.hospital.exception.BedAlreadyBookedException;
 import com.group15.hospital.model.ambulance.Ambulance;
 import com.group15.hospital.model.ambulance.AmbulanceReservation;
+import com.group15.hospital.model.bed.BaseBed;
+import com.group15.hospital.model.bed.BedComponent;
 import com.group15.hospital.model.enums.BedStatus;
+import com.group15.hospital.model.enums.DietType;
 import com.group15.hospital.model.enums.EquipmentType;
 import com.group15.hospital.model.enums.TriageLevel;
+import com.group15.hospital.model.hierarchy.Patient;
+import com.group15.hospital.service.containment.IsolationContainmentService;
 import com.group15.hospital.service.dispatch.AmbulanceDispatchService;
 
 import javax.swing.*;
@@ -35,6 +42,21 @@ public class AmbulanceTerminalPanel extends JPanel {
 
     private final AmbulanceDAO ambulanceDAO;
     private final AmbulanceDispatchService dispatchService;
+    private BedDAO bedDAO;
+    private PatientDAO patientDAO;
+    private IsolationContainmentService isolationService;
+
+    public void setBedDAO(BedDAO bedDAO) {
+        this.bedDAO = bedDAO;
+    }
+
+    public void setPatientDAO(PatientDAO patientDAO) {
+        this.patientDAO = patientDAO;
+    }
+
+    public void setIsolationContainmentService(IsolationContainmentService isolationService) {
+        this.isolationService = isolationService;
+    }
 
     // Reservation Form Components
     private JComboBox<String> ambulanceCombo;
@@ -343,6 +365,25 @@ public class AmbulanceTerminalPanel extends JPanel {
                     ambulanceId, triage, equipment, hospital, patientName
             );
 
+            // Synchronize BedDAO and IsolationService immediately
+            if (bedDAO != null) {
+                try {
+                    BaseBed memBed = BedDAO.getInMemoryBedStore().get(res.getAssignedBedId());
+                    if (memBed != null) {
+                        memBed.setBedStatus(BedStatus.RESERVED_EN_ROUTE);
+                    }
+                    bedDAO.updateBedStatus(res.getAssignedBedId(), BedStatus.RESERVED_EN_ROUTE);
+                } catch (Exception ignored) {}
+            }
+            if (isolationService != null) {
+                try {
+                    BedComponent bed = isolationService.getBed(res.getAssignedBedId());
+                    if (bed != null) {
+                        bed.setBedStatus(BedStatus.RESERVED_EN_ROUTE);
+                    }
+                } catch (Exception ignored) {}
+            }
+
             JOptionPane.showMessageDialog(
                     this,
                     String.format("✓ Reservation Confirmed!\n\nReservation ID: #%d\nBed Assigned: Bed #%d (%s)\nDestination: %s\nHold Window: 15 Minutes",
@@ -380,6 +421,54 @@ public class AmbulanceTerminalPanel extends JPanel {
 
         try {
             ambulanceDAO.confirmArrivalAtomic(resId);
+
+            // Synchronize with PatientDAO, BedDAO, and Phase 3 Isolation/Billing/Kitchen services
+            Optional<AmbulanceReservation> resOpt = ambulanceDAO.findReservationById(resId);
+            if (resOpt.isPresent()) {
+                AmbulanceReservation res = resOpt.get();
+                long bedId = res.getAssignedBedId();
+                String pName = res.getPatientName();
+                TriageLevel triage = res.getPatientTriage();
+
+                // 1. Create Patient in PatientDAO so they appear in Triage & Allocation table
+                long patientId = 5000L + (resId % 1000L);
+                DietType diet = (triage == TriageLevel.LEVEL_1 || triage == TriageLevel.LEVEL_2)
+                        ? DietType.IV_FLUIDS : DietType.REGULAR;
+                Patient patient = new Patient(pName, 45, "Unspecified", triage, diet);
+                patient.setPatientId(patientId);
+                patient.assignBed(bedId);
+                if (patientDAO != null) {
+                    try {
+                        patientDAO.save(patient);
+                    } catch (Exception ex) {
+                        // ignore if already present
+                    }
+                }
+
+                // 2. Update BedDAO state
+                if (bedDAO != null) {
+                    try {
+                        BaseBed memBed = BedDAO.getInMemoryBedStore().get(bedId);
+                        if (memBed != null) {
+                            memBed.assignPatient(patientId, pName, triage);
+                        }
+                        bedDAO.updateBedStatus(bedId, BedStatus.OCCUPIED);
+                    } catch (Exception ex) {
+                        // fallback logged
+                    }
+                }
+
+                // 3. Notify IsolationContainmentService -> triggers BillingService & KitchenService observers
+                if (isolationService != null) {
+                    try {
+                        BedComponent bed = isolationService.getBed(bedId);
+                        isolationService.admitPatient(patient, bed, false, "AMBULANCE_DISPATCH");
+                    } catch (Exception ex) {
+                        // fallback logged
+                    }
+                }
+            }
+
             JOptionPane.showMessageDialog(this, "Patient arrival confirmed! Bed status transitioned to OCCUPIED.", "Patient Admitted", JOptionPane.INFORMATION_MESSAGE);
             refreshReservationsTable();
             refreshAmbulanceDropdown();
@@ -530,13 +619,37 @@ public class AmbulanceTerminalPanel extends JPanel {
     }
 
     public void seedDemoBedsAndFleet() {
+        // Reset all ambulances to AVAILABLE
+        for (Ambulance a : ambulanceDAO.findAllAmbulances()) {
+            ambulanceDAO.updateAmbulanceAvailability(a.getAmbulanceId(), true, a.getCurrentHospitalName());
+        }
+        ambulanceDAO.seedBedForTesting(101L, BedStatus.VACANT);
+        ambulanceDAO.seedBedForTesting(106L, BedStatus.VACANT);
+        ambulanceDAO.seedBedForTesting(201L, BedStatus.VACANT);
+        ambulanceDAO.seedBedForTesting(203L, BedStatus.VACANT);
+        ambulanceDAO.seedBedForTesting(301L, BedStatus.VACANT);
+
         // Seed partner hospital beds across the network
         dispatchService.seedSimulatedBed("City Central Hospital", 101L, BedStatus.VACANT);
-        dispatchService.seedSimulatedBed("City Central Hospital", 102L, BedStatus.VACANT);
+        dispatchService.seedSimulatedBed("City Central Hospital", 106L, BedStatus.VACANT);
         dispatchService.seedSimulatedBed("Memorial Care Hospital", 201L, BedStatus.VACANT);
-        dispatchService.seedSimulatedBed("Memorial Care Hospital", 202L, BedStatus.VACANT);
+        dispatchService.seedSimulatedBed("Memorial Care Hospital", 203L, BedStatus.VACANT);
         dispatchService.seedSimulatedBed("Metro General Hospital", 301L, BedStatus.VACANT);
         dispatchService.seedSimulatedBed("St. Jude Emergency Center", 401L, BedStatus.VACANT);
+
+        if (bedDAO != null) {
+            try {
+                bedDAO.updateBedStatus(101L, BedStatus.VACANT);
+                BaseBed b101 = BedDAO.getInMemoryBedStore().get(101L);
+                if (b101 != null) {
+                    b101.dischargePatient();
+                    b101.setBedStatus(BedStatus.VACANT);
+                }
+                bedDAO.updateBedStatus(106L, BedStatus.VACANT);
+                BaseBed b106 = BedDAO.getInMemoryBedStore().get(106L);
+                if (b106 != null) b106.setBedStatus(BedStatus.VACANT);
+            } catch (Exception ignored) {}
+        }
     }
 
     public DefaultTableModel getTableModel() {

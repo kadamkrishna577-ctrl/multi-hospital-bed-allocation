@@ -65,11 +65,30 @@ public class TriageAlertPopupHandler implements AlertObserver {
         this.parentComponent = parentComponent;
     }
 
+    /**
+     * Unregisters this handler from AlertNotificationManager to prevent duplicate popups on logout.
+     */
+    public void unregister() {
+        if (this.notificationManager != null) {
+            this.notificationManager.unregisterObserver(this);
+            LOGGER.fine("[TriageAlertPopupHandler] Unregistered alert observer.");
+        }
+    }
+
     // ──────────────────────────── AlertObserver Callback ────────────────────────────
 
     @Override
     public void onAlertReceived(SystemAlert alert) {
         if (alert == null) return;
+
+        // Clean up stale listener if the parent dashboard window has been closed or disposed
+        if (parentComponent != null) {
+            Window win = SwingUtilities.getWindowAncestor(parentComponent);
+            if (win != null && !win.isDisplayable()) {
+                unregister();
+                return;
+            }
+        }
 
         // Ensure execution on Swing Event Dispatch Thread (< 0.5s)
         if (!SwingUtilities.isEventDispatchThread()) {

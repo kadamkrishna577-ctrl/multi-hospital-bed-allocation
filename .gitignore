@@ -27,6 +27,9 @@ target/
 *.tar.gz
 *.rar
 
+# Local configuration
+src/main/resources/db.properties
+
 # virtual machine crash logs
 hs_err_pid*
 replay_pid*

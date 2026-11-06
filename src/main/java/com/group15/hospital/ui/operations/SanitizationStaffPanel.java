@@ -1,6 +1,7 @@
 package com.group15.hospital.ui.operations;
 
 import com.group15.hospital.exception.IllegalBedStateException;
+import com.group15.hospital.model.bed.BaseBed;
 import com.group15.hospital.model.enums.BedStatus;
 import com.group15.hospital.model.enums.TriageLevel;
 import com.group15.hospital.model.state.BedState;
@@ -407,9 +408,9 @@ public class SanitizationStaffPanel extends JPanel {
 
         BedStatus finalStatus = BedStatus.VACANT;
         if (sanitizationService.getBedDAO() != null) {
-            BaseBed b = sanitizationService.getBedDAO().findById(bedId);
+            BaseBed b = sanitizationService.getBedDAO().findById(bedId).orElse(null);
             if (b != null) {
-                finalStatus = b.getStatus();
+                finalStatus = b.getBedStatus();
             }
         }
         String transitionLabel = (finalStatus == BedStatus.RESTRICTED_BUFFER)

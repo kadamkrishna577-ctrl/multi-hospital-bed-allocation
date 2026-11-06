@@ -7,6 +7,7 @@ import com.group15.hospital.model.ambulance.ALSAmbulance;
 import com.group15.hospital.model.ambulance.Ambulance;
 import com.group15.hospital.model.ambulance.AmbulanceReservation;
 import com.group15.hospital.model.ambulance.BLSAmbulance;
+import com.group15.hospital.model.bed.BaseBed;
 import com.group15.hospital.model.enums.BedStatus;
 import com.group15.hospital.model.enums.EquipmentType;
 import com.group15.hospital.model.enums.TriageLevel;
@@ -125,6 +126,10 @@ public class AmbulanceDAO {
      */
     public void seedBedForTesting(long bedId, BedStatus status) {
         simulatedBedStore.put(bedId, status);
+    }
+
+    public void seedSimulatedBed(long bedId, BedStatus status) {
+        seedBedForTesting(bedId, status);
     }
 
     public void seedBedForTesting(long bedId, BedStatus status, String hospitalName) {
@@ -303,6 +308,10 @@ public class AmbulanceDAO {
 
             // Update in-memory stores
             simulatedBedStore.put(bedId, BedStatus.RESERVED_EN_ROUTE);
+            BaseBed memBed = BedDAO.getInMemoryBedStore().get(bedId);
+            if (memBed != null) {
+                memBed.setBedStatus(BedStatus.RESERVED_EN_ROUTE);
+            }
             long finalId = (genId > 0) ? genId : reservationIdSequence.incrementAndGet();
 
             AmbulanceReservation saved = new AmbulanceReservation(
@@ -406,6 +415,10 @@ public class AmbulanceDAO {
             // Update in-memory states
             simulatedBedStore.put(oldBedId, BedStatus.VACANT);
             simulatedBedStore.put(newBedId, BedStatus.RESERVED_EN_ROUTE);
+            BaseBed oldMem = BedDAO.getInMemoryBedStore().get(oldBedId);
+            if (oldMem != null) oldMem.setBedStatus(BedStatus.VACANT);
+            BaseBed newMem = BedDAO.getInMemoryBedStore().get(newBedId);
+            if (newMem != null) newMem.setBedStatus(BedStatus.RESERVED_EN_ROUTE);
 
             existing.setHospitalName(newHospitalName);
             existing.setWardName(newWardName);
@@ -459,6 +472,10 @@ public class AmbulanceDAO {
             }
 
             simulatedBedStore.put(bedId, BedStatus.OCCUPIED);
+            BaseBed arrMem = BedDAO.getInMemoryBedStore().get(bedId);
+            if (arrMem != null) {
+                arrMem.setBedStatus(BedStatus.OCCUPIED);
+            }
             res.setStatus(AmbulanceReservation.STATUS_ARRIVED);
             reservationStore.put(reservationId, res);
             updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());
@@ -533,6 +550,10 @@ public class AmbulanceDAO {
                     }
 
                     simulatedBedStore.put(bedId, BedStatus.VACANT);
+                    BaseBed expMem = BedDAO.getInMemoryBedStore().get(bedId);
+                    if (expMem != null) {
+                        expMem.setBedStatus(BedStatus.VACANT);
+                    }
                     res.setStatus(AmbulanceReservation.STATUS_EXPIRED);
                     reservationStore.put(res.getReservationId(), res);
                     updateAmbulanceAvailability(res.getAmbulanceId(), true, res.getHospitalName());

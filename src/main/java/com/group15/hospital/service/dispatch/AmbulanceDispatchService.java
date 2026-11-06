@@ -2,10 +2,12 @@ package com.group15.hospital.service.dispatch;
 
 import com.group15.hospital.dao.AmbulanceDAO;
 import com.group15.hospital.dao.AlertDAO;
+import com.group15.hospital.dao.BedDAO;
 import com.group15.hospital.exception.BedAlreadyBookedException;
 import com.group15.hospital.model.ambulance.Ambulance;
 import com.group15.hospital.model.ambulance.AmbulanceReservation;
 import com.group15.hospital.model.ambulance.SystemAlert;
+import com.group15.hospital.model.bed.BaseBed;
 import com.group15.hospital.model.enums.BedStatus;
 import com.group15.hospital.model.enums.EquipmentType;
 import com.group15.hospital.model.enums.TriageLevel;
@@ -48,6 +50,7 @@ public class AmbulanceDispatchService {
 
     // ── Background Daemon (< 5% CPU overhead by virtue of 30-second interval) ──
     private final ScheduledExecutorService expiryScheduler;
+    private BedDAO bedDAO;
 
     // ── In-memory simulated partner hospital bed store (for offline / test use) ──
     // Maps hospitalName -> (bedId -> BedStatus), used when BedDAO is unavailable
@@ -78,6 +81,20 @@ public class AmbulanceDispatchService {
         });
 
         startExpiryDaemon();
+    }
+
+    public AmbulanceDispatchService(
+            AmbulanceDAO ambulanceDAO,
+            AlertDAO alertDAO,
+            AlertNotificationManager notificationManager,
+            BedDAO bedDAO
+    ) {
+        this(ambulanceDAO, alertDAO, notificationManager);
+        this.bedDAO = bedDAO;
+    }
+
+    public void setBedDAO(BedDAO bedDAO) {
+        this.bedDAO = bedDAO;
     }
 
     // ──────────────────── Ambulance Reservation (< 1.5 s) ─────────────────
@@ -393,7 +410,28 @@ public class AmbulanceDispatchService {
      * @return a valid bed ID, or {@code -1} if none available
      */
     private long pickBestVacantBed(String hospitalName, TriageLevel triage) {
-        // Check AmbulanceDAO's test bed store (synced during seedSimulatedBed calls)
+        // 1. Query live BedDAO (checks MySQL beds table where status = 'VACANT')
+        if (bedDAO != null) {
+            List<BaseBed> available = bedDAO.findAvailableBeds(hospitalName);
+            if (available != null && !available.isEmpty()) {
+                for (BaseBed b : available) {
+                    if (b.getBedStatus() == BedStatus.VACANT && ambulanceDAO.getBedStatus(b.getBedId()) == BedStatus.VACANT) {
+                        return b.getBedId();
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to BedDAO in-memory store
+        for (BaseBed b : BedDAO.getInMemoryBedStore().values()) {
+            if ((hospitalName == null || hospitalName.isBlank() || hospitalName.equalsIgnoreCase(b.getHospitalName()))
+                    && b.getBedStatus() == BedStatus.VACANT
+                    && ambulanceDAO.getBedStatus(b.getBedId()) == BedStatus.VACANT) {
+                return b.getBedId();
+            }
+        }
+
+        // 3. Simulated beds fallback
         ConcurrentHashMap<Long, BedStatus> hospitalBeds = simulatedHospitalBeds.get(hospitalName);
         if (hospitalBeds != null) {
             for (Map.Entry<Long, BedStatus> entry : hospitalBeds.entrySet()) {
@@ -403,8 +441,6 @@ public class AmbulanceDispatchService {
             }
         }
 
-        // In a fully wired application, this would call:
-        //   bedDAO.findAvailableBeds(hospitalName).stream().findFirst().map(BaseBed::getBedId).orElse(-1L);
         return -1L;
     }
 
