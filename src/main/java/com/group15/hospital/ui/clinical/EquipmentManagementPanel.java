@@ -119,6 +119,15 @@ public class EquipmentManagementPanel extends JPanel {
         bottomPanel.add(statusBar, BorderLayout.SOUTH);
 
         add(bottomPanel, BorderLayout.SOUTH);
+
+        // Pre-load data so the table is immediately populated on panel creation
+        try {
+            List<MedicalMachine> initial = maintenanceService.getEquipmentStatus("");
+            tableModel.setMachines(initial);
+            statusBar.setText("Loaded " + initial.size() + " machines. Ready.");
+        } catch (Exception e) {
+            refreshData();
+        }
     }
 
     // ──────────────────────── Action Handlers ────────────────────────────
