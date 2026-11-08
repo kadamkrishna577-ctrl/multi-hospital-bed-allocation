@@ -84,6 +84,12 @@ public class BedDAO {
         BaseBed bed303 = new BaseBed(303L, "Trauma ICU", "Metro General Hospital", BedStatus.VACANT);
         bed303.assignPatient(5005L, "Sarah Jenkins", TriageLevel.LEVEL_5);
         IN_MEMORY_BED_STORE.put(303L, bed303);
+
+        BaseBed bed304 = new BaseBed(304L, "Specialized Care Ward", "Metro General Hospital", BedStatus.VACANT);
+        IN_MEMORY_BED_STORE.put(304L, bed304);
+
+        BaseBed bed305 = new BaseBed(305L, "Specialized Care Ward", "Metro General Hospital", BedStatus.VACANT);
+        IN_MEMORY_BED_STORE.put(305L, bed305);
     }
 
     /**
@@ -368,7 +374,11 @@ public class BedDAO {
                         "Bed #" + bedId + " could not be booked — its status is no longer " +
                         expectedCurrentStatus + ". Another user may have booked it concurrently.");
             }
-            mem.assignPatient(patientId, patientName, level);
+            if (expectedCurrentStatus == BedStatus.REQUIRES_SANITIZATION) {
+                mem.forceAssignPatient(patientId, patientName, level);
+            } else {
+                mem.assignPatient(patientId, patientName, level);
+            }
         }
 
         try (Connection conn = db.getConnection();

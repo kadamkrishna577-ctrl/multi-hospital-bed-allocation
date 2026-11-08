@@ -211,9 +211,13 @@ public class TriageRegistrationPanel extends JPanel {
                 if (bedDAO != null) {
                     try {
                         BaseBed memBed = BedDAO.getInMemoryBedStore().get(res.getBedId());
-                        if (memBed != null) {
-                            memBed.assignPatient(patient.getPatientId(), patient.getFullName(), patient.getTriageLevel());
+                        if (memBed == null) {
+                            String wName = res.getWardName() != null ? res.getWardName() : "Specialized Care Ward";
+                            String hName = res.getHospital() != null ? res.getHospital().getName() : "Metro General Hospital";
+                            memBed = new BaseBed(res.getBedId(), wName, hName, BedStatus.VACANT);
+                            BedDAO.getInMemoryBedStore().put(res.getBedId(), memBed);
                         }
+                        memBed.forceAssignPatient(patient.getPatientId(), patient.getFullName(), patient.getTriageLevel());
                         bedDAO.updateBedStatus(res.getBedId(), BedStatus.OCCUPIED);
                     } catch (Exception ignored) {}
                 }

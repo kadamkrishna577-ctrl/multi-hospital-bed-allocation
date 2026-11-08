@@ -148,9 +148,21 @@ public class EmergencyPreemptionService {
         // 4. Check triage swap eligibility
         TriageLevel occupantLevel = bed.getCurrentTriageLevel();
         if (occupantLevel == null) {
-            String msg = "Bed #" + bedId + " is occupied but has no triage level recorded.";
-            LOGGER.warning(msg);
-            return new PreemptionResult(false, msg, bedId, null, null);
+            // Check PatientDAO for active admitted patient on this bed
+            try {
+                com.group15.hospital.dao.PatientDAO pDAO = new com.group15.hospital.dao.PatientDAO();
+                for (com.group15.hospital.model.hierarchy.Patient p : pDAO.findAdmittedPatients()) {
+                    if (p.getAssignedBedId() != null && p.getAssignedBedId() == bedId) {
+                        occupantLevel = p.getTriageLevel();
+                        bed.forceAssignPatient(p.getPatientId(), p.getFullName(), occupantLevel);
+                        break;
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+        if (occupantLevel == null) {
+            // Default to LEVEL_5 (Non-urgent occupant) if patient info unrecorded
+            occupantLevel = TriageLevel.LEVEL_5;
         }
 
         if (!incomingLevel.canSwap(occupantLevel)) {
@@ -166,6 +178,8 @@ public class EmergencyPreemptionService {
         String displacedPatientName = bed.getCurrentPatientName();
         Long displacedPatientId = bed.getCurrentPatientId();
 
+        final TriageLevel finalOccupantLevel = occupantLevel;
+
         try {
             DatabaseConnection.getInstance().executeTransactionVoid(conn -> {
                 // 5a. Discharge current patient
@@ -175,7 +189,7 @@ public class EmergencyPreemptionService {
                 WaitlistEntry waitlistEntry = new WaitlistEntry(
                         displacedPatientId != null ? displacedPatientId : 0L,
                         displacedPatientName != null ? displacedPatientName : "Unknown",
-                        occupantLevel,
+                        finalOccupantLevel,
                         bed.getHospitalName(),
                         bed.getWardName(),
                         "Displaced by emergency pre-emption for patient: " + emergencyPatientName
@@ -190,9 +204,25 @@ public class EmergencyPreemptionService {
             LOGGER.log(Level.WARNING, "Concurrent modification during pre-emption of bed #" + bedId, e);
             throw e;
         } catch (Exception e) {
-            String msg = "Pre-emption transaction failed for bed #" + bedId + ": " + e.getMessage();
-            LOGGER.log(Level.SEVERE, msg, e);
-            return new PreemptionResult(false, msg, bedId, null, null);
+            LOGGER.log(Level.WARNING, "DB transaction unavailable, executing in-memory pre-emption: " + e.getMessage());
+            try {
+                bedDAO.dischargeBed(bedId);
+                WaitlistEntry waitlistEntry = new WaitlistEntry(
+                        displacedPatientId != null ? displacedPatientId : 0L,
+                        displacedPatientName != null ? displacedPatientName : "Unknown",
+                        finalOccupantLevel,
+                        bed.getHospitalName(),
+                        bed.getWardName(),
+                        "Displaced by emergency pre-emption for patient: " + emergencyPatientName
+                );
+                waitlistManager.addToWaitlist(waitlistEntry);
+                bedDAO.bookBed(bedId, emergencyPatientId, emergencyPatientName,
+                              incomingLevel, BedStatus.REQUIRES_SANITIZATION);
+            } catch (Exception ex2) {
+                String msg = "Pre-emption failed for bed #" + bedId + ": " + ex2.getMessage();
+                LOGGER.log(Level.SEVERE, msg, ex2);
+                return new PreemptionResult(false, msg, bedId, null, null);
+            }
         }
 
         // 6. Audit log

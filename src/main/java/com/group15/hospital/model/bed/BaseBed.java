@@ -172,6 +172,16 @@ public class BaseBed implements BedComponent {
     }
 
     /**
+     * Forcibly records patient occupancy, used during admissions and synchronization.
+     */
+    public synchronized void forceAssignPatient(long patientId, String patientName, TriageLevel triageLevel) {
+        this.currentPatientId = patientId;
+        this.currentPatientName = Objects.requireNonNull(patientName, "patientName must not be null");
+        this.currentTriageLevel = Objects.requireNonNull(triageLevel, "triageLevel must not be null");
+        this.bedStatus = BedStatus.OCCUPIED;
+    }
+
+    /**
      * Discharges the current patient and transitions the bed to
      * {@link BedStatus#REQUIRES_SANITIZATION}.
      */
