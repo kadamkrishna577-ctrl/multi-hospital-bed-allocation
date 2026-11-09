@@ -1,22 +1,41 @@
 package com.group15.hospital.ui.operations;
 
-import com.group15.hospital.dao.AlertDAO;
-import com.group15.hospital.model.ambulance.SystemAlert;
-import com.group15.hospital.model.enums.UserRole;
-import com.group15.hospital.service.dispatch.AlertNotificationManager;
-import com.group15.hospital.service.dispatch.AlertObserver;
-
-import javax.swing.*;
-import javax.swing.border.EmptyBorder;
-import javax.swing.border.LineBorder;
-import javax.swing.table.DefaultTableCellRenderer;
-import javax.swing.table.DefaultTableModel;
-import java.awt.*;
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.FlowLayout;
+import java.awt.Font;
+import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
+import java.awt.Window;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
+
+import javax.swing.JButton;
+import javax.swing.JDialog;
+import javax.swing.JLabel;
+import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JScrollPane;
+import javax.swing.JTable;
+import javax.swing.JTextArea;
+import javax.swing.ListSelectionModel;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
+import javax.swing.border.EmptyBorder;
+import javax.swing.border.LineBorder;
+import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.table.DefaultTableModel;
+
+import com.group15.hospital.dao.AlertDAO;
+import com.group15.hospital.model.ambulance.SystemAlert;
+import com.group15.hospital.model.enums.UserRole;
+import com.group15.hospital.service.dispatch.AlertNotificationManager;
+import com.group15.hospital.service.dispatch.AlertObserver;
 
 /**
  * Real-time Swing pop-up alert handler and notification feed panel (SRS F13, Use Cases U5 & U6).
@@ -195,7 +214,7 @@ public class TriageAlertPopupHandler implements AlertObserver {
         dialog.add(footerPanel, BorderLayout.SOUTH);
 
         dialog.pack();
-        dialog.setSize(Math.max(dialog.getWidth(), 440), Math.max(dialog.getHeight(), 200));
+        dialog.setSize(Math.max(dialog.getWidth(), 500), Math.max(dialog.getHeight(), 260));
 
         if (owner != null && owner.isVisible()) {
             dialog.setLocationRelativeTo(owner);
